@@ -8,13 +8,6 @@ namespace daw
 
 namespace
 {
-    constexpr const char* sampleFilePatterns = "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3";
-
-    bool hasSupportedExtension (const juce::String& path)
-    {
-        return juce::File (path).hasFileExtension ("wav;aif;aiff;flac;ogg;mp3");
-    }
-
     /** "Audio 3" -> "3"; falls back to "On" if the name has no number. */
     juce::String trackNumberText (const juce::String& name)
     {
@@ -92,23 +85,12 @@ namespace
 }
 
 //==============================================================================
-TrackStrip::TrackStrip (AudioTrack& audioTrack, juce::AudioFormatManager& formatManager)
-    : track (audioTrack), formats (formatManager)
+TrackStrip::TrackStrip (AudioTrack& audioTrack)
+    : track (audioTrack)
 {
     nameLabel.setText (track.getName(), juce::dontSendNotification);
     styleStripHeader (nameLabel);
     addAndMakeVisible (nameLabel);
-
-    sampleButton.setColour (juce::TextButton::buttonColourId, colours::panelRaised);
-    sampleButton.setColour (juce::TextButton::textColourOffId, colours::text);
-    sampleButton.setMouseClickGrabsKeyboardFocus (false);
-    sampleButton.onClick = [this] { openFileChooser(); };
-    addAndMakeVisible (sampleButton);
-
-    styleStripButton (loopButton, colours::accent);
-    loopButton.setToggleState (track.isLooping(), juce::dontSendNotification);
-    loopButton.onClick = [this] { track.setLooping (loopButton.getToggleState()); };
-    addAndMakeVisible (loopButton);
 
     panKnob.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     panKnob.setRange (-1.0, 1.0, 0.01);
@@ -151,12 +133,6 @@ TrackStrip::TrackStrip (AudioTrack& audioTrack, juce::AudioFormatManager& format
     refresh();
 }
 
-TrackStrip::~TrackStrip()
-{
-    // Deleting a pending chooser aborts it before this component goes away.
-    chooser.reset();
-}
-
 void TrackStrip::refresh()
 {
     meter.setLevels (track.getMeter().consume (0), track.getMeter().consume (1));
@@ -171,7 +147,6 @@ void TrackStrip::refresh()
     if (! panKnob.isMouseButtonDown())
         panKnob.setValue (track.getPan(), juce::dontSendNotification);
 
-    loopButton.setToggleState (track.isLooping(), juce::dontSendNotification);
     muteButton.setToggleState (! track.isMuted(), juce::dontSendNotification);
     soloButton.setToggleState (track.isSoloed(), juce::dontSendNotification);
 
@@ -180,11 +155,6 @@ void TrackStrip::refresh()
         nameLabel.setText (track.getName(), juce::dontSendNotification);
         muteButton.setButtonText (trackNumberText (track.getName()));
     }
-
-    const auto sampleName = track.getSampleName();
-    const auto wantedText = sampleName.isNotEmpty() ? sampleName : juce::String ("Drop sample");
-    if (sampleButton.getButtonText() != wantedText)
-        sampleButton.setButtonText (wantedText);
 }
 
 void TrackStrip::paint (juce::Graphics& g)
@@ -194,8 +164,8 @@ void TrackStrip::paint (juce::Graphics& g)
     g.setColour (colours::panel);
     g.fillRoundedRectangle (bounds, 4.0f);
 
-    g.setColour (dragHover ? colours::accent : colours::outline);
-    g.drawRoundedRectangle (bounds, 4.0f, dragHover ? 2.0f : 1.0f);
+    g.setColour (colours::outline);
+    g.drawRoundedRectangle (bounds, 4.0f, 1.0f);
 }
 
 void TrackStrip::resized()
@@ -205,11 +175,6 @@ void TrackStrip::resized()
     nameLabel.setBounds (area.removeFromTop (20));
     area.removeFromTop (5);
 
-    sampleButton.setBounds (area.removeFromTop (28));
-    area.removeFromTop (5);
-
-    loopButton.setBounds (area.removeFromTop (20));
-    area.removeFromTop (6);
 
     auto panRow = area.removeFromTop (40);
     panKnob.setBounds (panRow.withSizeKeepingCentre (juce::jmin (36, panRow.getWidth()), 36));
@@ -229,85 +194,6 @@ void TrackStrip::resized()
     area.removeFromRight (4);
 
     fader.setBounds (area);
-}
-
-//==============================================================================
-bool TrackStrip::isInterestedInFileDrag (const juce::StringArray& files)
-{
-    for (const auto& path : files)
-        if (hasSupportedExtension (path))
-            return true;
-
-    return false;
-}
-
-void TrackStrip::filesDropped (const juce::StringArray& files, int, int)
-{
-    dragHover = false;
-    repaint();
-
-    for (const auto& path : files)
-    {
-        if (hasSupportedExtension (path))
-        {
-            loadFile (juce::File (path));
-            break;
-        }
-    }
-}
-
-void TrackStrip::fileDragEnter (const juce::StringArray& files, int, int)
-{
-    if (! dragHover && isInterestedInFileDrag (files))
-    {
-        dragHover = true;
-        repaint();
-    }
-}
-
-void TrackStrip::fileDragExit (const juce::StringArray&)
-{
-    if (dragHover)
-    {
-        dragHover = false;
-        repaint();
-    }
-}
-
-void TrackStrip::loadFile (const juce::File& file)
-{
-    if (auto sample = loadSample (file, formats))
-    {
-        sampleButton.setButtonText (sample->name);
-        track.setSample (std::move (sample));
-        return;
-    }
-
-    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
-                                            "Could not load sample",
-                                            "The file \"" + file.getFileName()
-                                                + "\" could not be decoded. Supported formats are "
-                                                  "WAV, AIFF, FLAC, OGG and MP3.",
-                                            "OK",
-                                            this);
-}
-
-void TrackStrip::openFileChooser()
-{
-    chooser = std::make_unique<juce::FileChooser> ("Load sample",
-                                                   juce::File::getSpecialLocation (juce::File::userHomeDirectory),
-                                                   sampleFilePatterns);
-
-    const auto chooserFlags = juce::FileBrowserComponent::openMode
-                            | juce::FileBrowserComponent::canSelectFiles;
-
-    chooser->launchAsync (chooserFlags, [this] (const juce::FileChooser& fileChooser)
-    {
-        const auto file = fileChooser.getResult();
-
-        if (file != juce::File())
-            loadFile (file);
-    });
 }
 
 //==============================================================================

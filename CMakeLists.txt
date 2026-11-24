@@ -24,6 +24,14 @@ target_sources(daw_engine INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/Transport.cpp)
 target_include_directories(daw_engine INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/engine)
 
+# Headless document model (tracks/clips, undo, sample pool) on top of the engine.
+add_library(daw_model INTERFACE)
+target_sources(daw_model INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/model/Project.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/model/SamplePool.cpp)
+target_include_directories(daw_model INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/model)
+target_link_libraries(daw_model INTERFACE daw_engine)
+
 set(DAW_COMMON_DEFINITIONS
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
@@ -41,12 +49,15 @@ if(DAW_BUILD_TESTS)
         tests/TestMain.cpp
         tests/TransportTests.cpp
         tests/MetronomeTests.cpp
-        tests/TrackTests.cpp)
+        tests/TrackTests.cpp
+        tests/ProjectTests.cpp)
     target_compile_definitions(DawEngineTests PRIVATE ${DAW_COMMON_DEFINITIONS})
     target_link_libraries(DawEngineTests PRIVATE
-        daw_engine
+        daw_model
         juce::juce_audio_basics
         juce::juce_audio_formats
+        juce::juce_data_structures
+        juce::juce_graphics
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
 
@@ -64,8 +75,12 @@ if(DAW_BUILD_APP)
         app/TransportBar.cpp
         app/TrackStrip.cpp
         app/LevelMeter.cpp
-        app/DawLookAndFeel.cpp)
-    target_include_directories(DiyDaw PRIVATE app)
+        app/DawLookAndFeel.cpp
+        app/arrangement/ArrangementView.cpp
+        app/arrangement/ClipPainter.cpp
+        app/arrangement/TimeRuler.cpp
+        app/arrangement/TrackHeader.cpp)
+    target_include_directories(DiyDaw PRIVATE app app/arrangement)
     target_compile_definitions(DiyDaw PRIVATE
         ${DAW_COMMON_DEFINITIONS}
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:DiyDaw,JUCE_PRODUCT_NAME>"
@@ -77,7 +92,7 @@ if(DAW_BUILD_APP)
         target_compile_definitions(DiyDaw PRIVATE JUCE_ALSA=0 JUCE_JACK=0)
     endif()
     target_link_libraries(DiyDaw PRIVATE
-        daw_engine
+        daw_model
         juce::juce_audio_utils
         juce::juce_audio_formats
         juce::juce_gui_extra

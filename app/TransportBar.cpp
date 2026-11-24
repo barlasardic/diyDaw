@@ -84,6 +84,11 @@ TransportBar::TransportBar (Engine& e) : engine (e)
     addTrackButton.onClick = [this] { if (onAddTrack) onAddTrack(); };
     addAndMakeVisible (addTrackButton);
 
+    viewButton.setMouseClickGrabsKeyboardFocus (false);
+    viewButton.setTooltip ("Switch between arrangement and mixer (Tab)");
+    viewButton.onClick = [this] { if (onToggleView) onToggleView(); };
+    addAndMakeVisible (viewButton);
+
     settingsButton.setMouseClickGrabsKeyboardFocus (false);
     settingsButton.onClick = [this] { if (onAudioSettings) onAudioSettings(); };
     addAndMakeVisible (settingsButton);
@@ -138,6 +143,8 @@ void TransportBar::resized()
     settingsButton.setBounds (area.removeFromRight (80).reduced (0, 2));
     area.removeFromRight (6);
     addTrackButton.setBounds (area.removeFromRight (80).reduced (0, 2));
+    area.removeFromRight (6);
+    viewButton.setBounds (area.removeFromRight (100).reduced (0, 2));
 
     // Centre cluster: play, stop, position
     auto centre = area.withSizeKeepingCentre (200, area.getHeight());

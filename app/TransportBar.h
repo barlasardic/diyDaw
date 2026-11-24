@@ -21,6 +21,10 @@ public:
 
     std::function<void()> onAddTrack;
     std::function<void()> onAudioSettings;
+    std::function<void()> onToggleView;
+
+    /** Label of the view-switch button, e.g. "Mixer" while the arrangement is shown. */
+    void setViewButtonText (const juce::String& text) { viewButton.setButtonText (text); }
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -39,6 +43,7 @@ private:
     juce::Label positionLabel;
     juce::TextButton addTrackButton { "+ Track" };
     juce::TextButton settingsButton { "Audio..." };
+    juce::TextButton viewButton { "Mixer" };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TransportBar)
 };

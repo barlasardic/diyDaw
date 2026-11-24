@@ -3,6 +3,7 @@
 #include <juce_core/juce_core.h>
 
 #include <cmath>
+#include <initializer_list>
 #include <memory>
 
 namespace
@@ -12,10 +13,10 @@ constexpr int blockSize = 512;
 constexpr int settledStart = 1500; // Beyond the 960-sample (20 ms) gain ramp.
 constexpr float centreGain = 0.70710678f;
 
-std::unique_ptr<daw::SampleData> makeConstantSample (float amplitude, int frames = 1024,
-                                                   int channels = 1, const juce::String& name = "constant")
+std::shared_ptr<daw::SampleData> makeConstantSample (float amplitude, int frames = 1024,
+                                                     int channels = 1, const juce::String& name = "constant")
 {
-    auto sample = std::make_unique<daw::SampleData>();
+    auto sample = std::make_shared<daw::SampleData>();
     sample->sampleRate = sampleRate;
     sample->name = name;
     sample->buffer.setSize (channels, frames);
@@ -25,19 +26,27 @@ std::unique_ptr<daw::SampleData> makeConstantSample (float amplitude, int frames
     return sample;
 }
 
-void prepareEngine (daw::Engine& engine)
+void prepareEngine (daw::Engine& engine, int maxBlockSize = blockSize)
 {
-    engine.prepare (sampleRate, blockSize);
+    engine.prepare (sampleRate, maxBlockSize);
     engine.getTransport().setBpm (120.0);
     engine.getTransport().play();
     engine.getMetronome().setEnabled (false);
 }
 
+void setTrackClips (daw::AudioTrack& track, std::initializer_list<daw::Clip> clips)
+{
+    auto list = std::make_unique<daw::ClipList>();
+    list->clips.assign (clips);
+    track.setClips (std::move (list));
+}
+
+double framesToBeats (int frames) { return static_cast<double> (frames) / 24000.0; }
+
 daw::AudioTrack& addConstantTrack (daw::Engine& engine, float amplitude = 0.5f)
 {
     auto& track = engine.getTrack (engine.addTrack());
-    track.setSample (makeConstantSample (amplitude));
-    track.setLooping (true);
+    setTrackClips (track, { { makeConstantSample (amplitude), 0.0, 100.0, 0.0, true } });
     return track;
 }
 
@@ -74,12 +83,14 @@ struct TrackTests : juce::UnitTest
 
     void runTest() override
     {
+        runClipTests();
+
         beginTest ("A clip at beat one is silent before its start and audible after it");
         {
             daw::Engine engine;
             prepareEngine (engine);
             auto& track = addConstantTrack (engine);
-            track.setClipStartBeat (1.0);
+            setTrackClips (track, { { makeConstantSample (0.5f), 1.0, 100.0, 0.0, true } });
             const auto audio = renderFrames (engine, 28000, 997);
             for (int channel = 0; channel < 2; ++channel)
             {
@@ -167,8 +178,7 @@ struct TrackTests : juce::UnitTest
             daw::Engine engine;
             prepareEngine (engine);
             auto& track = addConstantTrack (engine);
-            track.setSample (makeConstantSample (0.5f, 257, 2));
-            track.setLooping (looping);
+            setTrackClips (track, { { makeConstantSample (0.5f, 257, 2), 0.0, 100.0, 0.0, looping } });
             const auto audio = renderFrames (engine, 8192, 997);
             expect (audio.getMagnitude (0, 200) > 0.0f, "Both modes initially play");
             expectLevel (audio, 0, looping ? 0.5f * centreGain : 0.0f);
@@ -209,7 +219,7 @@ struct TrackTests : juce::UnitTest
             }
         }
 
-        beginTest ("A running track adopts a replacement sample and survives garbage collection");
+        beginTest ("A running track adopts a replacement clip snapshot and survives garbage collection");
         {
             daw::Engine engine;
             prepareEngine (engine);
@@ -219,8 +229,7 @@ struct TrackTests : juce::UnitTest
             expectLevel (audio, 0, 0.25f);
             const auto position = engine.getTransport().getPositionBeats();
 
-            track.setSample (makeConstantSample (0.75f, 257, 2, "replacement"));
-            expectEquals (track.getSampleName(), juce::String ("replacement"));
+            setTrackClips (track, { { makeConstantSample (0.75f, 257, 2, "replacement"), 0.0, 100.0, 0.0, true } });
             audio = renderFrames (engine, 4096);
             expectLevel (audio, 0, 0.75f, 0);
             expect (engine.getTransport().getPositionBeats() > position);
@@ -229,11 +238,189 @@ struct TrackTests : juce::UnitTest
             expectLevel (audio, 0, 0.75f, 0);
             expectLevel (audio, 1, 0.0f, 0);
 
-            track.setSample (nullptr);
+            setTrackClips (track, {});
             audio = renderFrames (engine, 4096);
             expectLevel (audio, 0, 0.0f, 0);
             expectLevel (audio, 1, 0.0f, 0);
             engine.collectGarbage();
+        }
+    }
+
+    void expectRegion (const juce::AudioBuffer<float>& audio, int channel, float level,
+                       int start, int count)
+    {
+        float error = 0.0f;
+        for (int i = start; i < start + count; ++i)
+        {
+            const auto value = audio.getSample (channel, i);
+            if (! std::isfinite (value))
+            {
+                expect (false, "Non-finite sample at frame " + juce::String (i));
+                return;
+            }
+            error = juce::jmax (error, std::abs (value - level));
+        }
+        expectWithinAbsoluteError (error, 0.0f, 1.0e-6f,
+                                   "Region starting at frame " + juce::String (start));
+    }
+
+    void runClipTests()
+    {
+        const auto fadeFrames = static_cast<int> (std::ceil (sampleRate * daw::AudioTrack::clipFadeSeconds));
+
+        beginTest ("Two clips play at independent positions with silence before, between and after");
+        {
+            daw::Engine engine;
+            prepareEngine (engine);
+            auto& track = engine.getTrack (engine.addTrack());
+            setTrackClips (track, {
+                { makeConstantSample (0.25f, 8192), framesToBeats (4096), framesToBeats (2048) },
+                { makeConstantSample (-0.5f, 8192, 2), framesToBeats (8192), framesToBeats (2048) }
+            });
+            const auto audio = renderFrames (engine, 12288);
+            for (int channel = 0; channel < 2; ++channel)
+            {
+                expectRegion (audio, channel, 0.0f, 0, 4096);
+                expectRegion (audio, channel, 0.25f * centreGain, 4096 + fadeFrames, 2048 - 2 * fadeFrames);
+                expectRegion (audio, channel, 0.0f, 6144, 2048);
+                expectRegion (audio, channel, -0.5f * centreGain, 8192 + fadeFrames, 2048 - 2 * fadeFrames);
+                expectRegion (audio, channel, 0.0f, 10240, 2048);
+            }
+        }
+
+        beginTest ("Offset selects the correct source frames, including fractional-frame interpolation");
+        {
+            daw::Engine engine;
+            prepareEngine (engine);
+            auto& track = engine.getTrack (engine.addTrack());
+            auto sample = makeConstantSample (0.0f, 12000, 2);
+            for (int i = 0; i < sample->getNumFrames(); ++i)
+            {
+                sample->buffer.setSample (0, i, static_cast<float> (i) / 12000.0f);
+                sample->buffer.setSample (1, i, -static_cast<float> (i) / 24000.0f);
+            }
+            constexpr double offsetFrames = 1234.5;
+            setTrackClips (track, { { sample, framesToBeats (4096), framesToBeats (4096), offsetFrames / sampleRate } });
+            const auto audio = renderFrames (engine, 9000, 997);
+            for (int channel = 0; channel < 2; ++channel)
+            {
+                float error = 0.0f;
+                for (int elapsed = fadeFrames; elapsed < 4096 - fadeFrames; ++elapsed)
+                {
+                    const auto source = static_cast<float> (offsetFrames + elapsed);
+                    const auto expected = centreGain * (channel == 0 ? source / 12000.0f : -source / 24000.0f);
+                    error = juce::jmax (error, std::abs (audio.getSample (channel, 4096 + elapsed) - expected));
+                }
+                expectWithinAbsoluteError (error, 0.0f, 1.0e-6f, "Source-frame encoding agrees at every interior frame");
+            }
+        }
+
+        beginTest ("Clip length cuts a longer sample off with a 2 ms fade at both edges");
+        {
+            daw::Engine engine;
+            prepareEngine (engine);
+            auto& track = engine.getTrack (engine.addTrack());
+            // Empty blocks settle mixer gains before the clip starts on a block boundary.
+            setTrackClips (track, { { makeConstantSample (0.5f, 48000), framesToBeats (4096), framesToBeats (2048) } });
+            const auto audio = renderFrames (engine, 8192);
+            const auto fullLevel = 0.5f * centreGain;
+            for (int channel = 0; channel < 2; ++channel)
+            {
+                expectWithinAbsoluteError (audio.getSample (channel, 4096), 0.0f, 1.0e-6f, "First clip sample is zero");
+                for (int i = 0; i <= fadeFrames; ++i)
+                {
+                    const auto expected = fullLevel * static_cast<float> (i) / static_cast<float> (fadeFrames);
+                    expectWithinAbsoluteError (audio.getSample (channel, 4096 + i), expected, 1.0e-6f,
+                                               "Fade-in frame " + juce::String (i));
+                    if (i > 0)
+                        expectWithinAbsoluteError (audio.getSample (channel, 6144 - i), expected, 1.0e-6f,
+                                                   "Fade-out frame " + juce::String (i));
+                }
+                expectRegion (audio, channel, fullLevel, 4096 + fadeFrames, 2048 - 2 * fadeFrames);
+                expectRegion (audio, channel, 0.0f, 6144, 2048);
+            }
+        }
+
+        beginTest ("A short encoded sample repeats its source frames only when looping is enabled");
+        for (const auto looping : { false, true })
+        {
+            daw::Engine engine;
+            prepareEngine (engine, 997);
+            auto& track = engine.getTrack (engine.addTrack());
+            auto sample = makeConstantSample (0.0f, 257);
+            for (int i = 0; i < sample->getNumFrames(); ++i)
+                sample->buffer.setSample (0, i, 0.1f + 0.7f * static_cast<float> (i) / 257.0f);
+            setTrackClips (track, { { sample, framesToBeats (4096), framesToBeats (4096), 0.0, looping } });
+            const auto audio = renderFrames (engine, 10000, 997);
+            for (int channel = 0; channel < 2; ++channel)
+            {
+                expectWithinAbsoluteError (audio.getSample (channel, 4096 + 128),
+                                           sample->buffer.getSample (0, 128) * centreGain, 1.0e-6f);
+                for (int cycle = 1; cycle < 14; ++cycle)
+                    for (const auto sourceFrame : { 32, 128, 240 })
+                    {
+                        const auto expected = looping ? sample->buffer.getSample (0, sourceFrame) * centreGain : 0.0f;
+                        expectWithinAbsoluteError (audio.getSample (channel, 4096 + cycle * 257 + sourceFrame),
+                                                   expected, 1.0e-6f,
+                                                   "Loop " + juce::String (cycle) + ", source frame " + juce::String (sourceFrame));
+                    }
+                if (! looping)
+                    expectRegion (audio, channel, 0.0f, 4096 + 257, 4096 - 257);
+            }
+        }
+
+        for (const auto startFrame : { 1237, 0 })
+        {
+            beginTest ("Whole render is independent of 64/512/997-sample blocks, clip start frame " + juce::String (startFrame));
+            auto sample = makeConstantSample (0.0f, 120000, 2);
+            for (int i = 0; i < sample->getNumFrames(); ++i)
+            {
+                sample->buffer.setSample (0, i, static_cast<float> (0.4 * std::sin (0.013 * i)));
+                sample->buffer.setSample (1, i, static_cast<float> (0.3 * std::cos (0.017 * i)));
+            }
+            const auto lengthFrames = startFrame == 0 ? 100003 : 7013;
+            const auto totalFrames = startFrame + lengthFrames + 2048;
+            juce::AudioBuffer<float> reference;
+            for (const auto renderBlockSize : { 64, 512, 997 })
+            {
+                daw::Engine engine;
+                prepareEngine (engine, renderBlockSize);
+                auto& track = engine.getTrack (engine.addTrack());
+                setTrackClips (track, { { sample, framesToBeats (startFrame), framesToBeats (lengthFrames), 37.25 / sampleRate } });
+                const auto audio = renderFrames (engine, totalFrames, renderBlockSize);
+                expect (audio.getMagnitude (0, audio.getNumSamples()) > 0.1f, "Comparison includes audible audio");
+                for (int channel = 0; channel < 2; ++channel)
+                {
+                    expectRegion (audio, channel, 0.0f, 0, startFrame);
+                    expectRegion (audio, channel, 0.0f, startFrame + lengthFrames, 2048);
+                }
+                if (renderBlockSize == 64)
+                {
+                    reference.makeCopyOf (audio);
+                    continue;
+                }
+
+                float error = 0.0f;
+                int worstFrame = 0;
+                for (int channel = 0; channel < 2; ++channel)
+                    for (int i = 0; i < totalFrames; ++i)
+                    {
+                        const auto value = audio.getSample (channel, i);
+                        if (! std::isfinite (value))
+                        {
+                            expect (false, "Non-finite output at frame " + juce::String (i));
+                            return;
+                        }
+                        const auto difference = std::abs (value - reference.getSample (channel, i));
+                        if (difference > error)
+                        {
+                            error = difference;
+                            worstFrame = i;
+                        }
+                    }
+                expectWithinAbsoluteError (error, 0.0f, 1.0e-6f,
+                                           "Block size " + juce::String (renderBlockSize) + ", worst frame " + juce::String (worstFrame));
+            }
         }
     }
 };

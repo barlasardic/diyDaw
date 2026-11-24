@@ -8,16 +8,22 @@ MainComponent::MainComponent()
     setLookAndFeel (&lookAndFeel);
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
 
-    formats.registerBasicFormats();
+    // Clips whose sample was still decoding were skipped in the engine snapshot.
+    samplePool.onSampleAdded = [this] (const juce::String&) { project.syncAllTracks(); };
 
     transportBar.onAddTrack = [this] { addTrack(); };
     transportBar.onAudioSettings = [this] { showAudioSettings(); };
+    transportBar.onToggleView = [this] { setShowingMixer (! showingMixer); };
     addAndMakeVisible (transportBar);
+
+    arrangement.onAddTrackRequested = [this] { addTrack(); };
+    addAndMakeVisible (arrangement);
 
     stripViewport.setViewedComponent (&stripHolder, false);
     stripViewport.setScrollBarsShown (false, true);
-    addAndMakeVisible (stripViewport);
-    addAndMakeVisible (masterStrip);
+    mixer.addAndMakeVisible (stripViewport);
+    mixer.addAndMakeVisible (masterStrip);
+    addChildComponent (mixer);
 
     for (int i = 0; i < 4; ++i)
         addTrack();
@@ -33,8 +39,9 @@ MainComponent::MainComponent()
 
     deviceManager.addAudioCallback (this);
 
+    setShowingMixer (false);
     setWantsKeyboardFocus (true);
-    setSize (1100, 640);
+    setSize (1280, 760);
     startTimerHz (30);
 }
 
@@ -73,22 +80,52 @@ void MainComponent::timerCallback()
     engine.collectGarbage();
     transportBar.refresh();
 
-    for (auto& s : strips)
-        s->refresh();
+    if (showingMixer)
+    {
+        for (auto& s : strips)
+            s->refresh();
 
-    masterStrip.refresh();
+        masterStrip.refresh();
+    }
+    else
+    {
+        arrangement.refresh();
+    }
 }
 
 void MainComponent::addTrack()
 {
-    const auto index = engine.addTrack();
-    if (index < 0)
+    const auto track = project.addTrack();
+    if (! track.isValid())
         return;
 
-    auto strip = std::make_unique<TrackStrip> (engine.getTrack (index), formats);
+    auto strip = std::make_unique<TrackStrip> (project.getEngineTrack (track));
     stripHolder.addAndMakeVisible (*strip);
     strips.push_back (std::move (strip));
     layoutStrips();
+}
+
+void MainComponent::loadFilesSynchronously (const juce::Array<juce::File>& files, double beatSpacing)
+{
+    for (int i = 0; i < files.size(); ++i)
+    {
+        while (project.getNumTracks() <= i)
+            addTrack();
+
+        if (auto sample = loadSample (files[i], samplePool.getFormats()))
+        {
+            samplePool.insert (SamplePool::keyFor (files[i]), std::move (sample));
+            project.addClip (project.getTrack (i), files[i], i * beatSpacing);
+        }
+    }
+}
+
+void MainComponent::setShowingMixer (bool shouldShowMixer)
+{
+    showingMixer = shouldShowMixer;
+    mixer.setVisible (showingMixer);
+    arrangement.setVisible (! showingMixer);
+    transportBar.setViewButtonText (showingMixer ? "Arrangement" : "Mixer");
 }
 
 void MainComponent::showAudioSettings()
@@ -109,9 +146,35 @@ void MainComponent::showAudioSettings()
 
 bool MainComponent::keyPressed (const juce::KeyPress& key)
 {
+    const auto mods = key.getModifiers();
+
     if (key == juce::KeyPress::spaceKey)
     {
         engine.getTransport().togglePlay();
+        return true;
+    }
+
+    if (key == juce::KeyPress::tabKey)
+    {
+        setShowingMixer (! showingMixer);
+        return true;
+    }
+
+    if (mods.isCommandDown() && key.getKeyCode() == 'Z')
+    {
+        mods.isShiftDown() ? project.redo() : project.undo();
+        return true;
+    }
+
+    if (mods.isCommandDown() && key.getKeyCode() == 'Y')
+    {
+        project.redo();
+        return true;
+    }
+
+    if (mods.isCommandDown() && key.getKeyCode() == 'T')
+    {
+        addTrack();
         return true;
     }
 
@@ -141,10 +204,13 @@ void MainComponent::resized()
     auto area = getLocalBounds();
     transportBar.setBounds (area.removeFromTop (48));
 
-    area.reduce (6, 6);
-    masterStrip.setBounds (area.removeFromRight (MasterStrip::preferredWidth));
-    area.removeFromRight (8);
-    stripViewport.setBounds (area);
+    arrangement.setBounds (area);
+    mixer.setBounds (area);
+
+    auto mixerArea = mixer.getLocalBounds().reduced (6, 6);
+    masterStrip.setBounds (mixerArea.removeFromRight (MasterStrip::preferredWidth));
+    mixerArea.removeFromRight (8);
+    stripViewport.setBounds (mixerArea);
     layoutStrips();
 }
 

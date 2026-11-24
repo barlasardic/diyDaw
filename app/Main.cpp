@@ -14,7 +14,8 @@ public:
 
     void initialise (const juce::String& commandLine) override
     {
-        // `diyDaw --snapshot out.png [WxH]` renders the UI offscreen and exits (for visual checks).
+        // `diyDaw --snapshot out.png [WxH] [audio files...]` renders the UI offscreen and exits
+        // (for visual checks). Audio file i is placed on track i, staggered by one bar.
         auto args = juce::StringArray::fromTokens (commandLine, true);
         if (const auto i = args.indexOf ("--snapshot"); i >= 0 && i + 1 < args.size())
         {
@@ -22,6 +23,11 @@ public:
             MainComponent ui;
             if (size.size() == 2)
                 ui.setSize (size[0].getIntValue(), size[1].getIntValue());
+
+            juce::Array<juce::File> audioFiles;
+            for (int a = i + 3; a < args.size(); ++a)
+                audioFiles.add (juce::File::getCurrentWorkingDirectory().getChildFile (args[a].unquoted()));
+            ui.loadFilesSynchronously (audioFiles, 4.0);
 
             const auto image = ui.createComponentSnapshot (ui.getLocalBounds());
             juce::File file (juce::File::getCurrentWorkingDirectory().getChildFile (args[i + 1].unquoted()));
