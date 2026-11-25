@@ -60,7 +60,12 @@ public:
     void resized() override;
 
 private:
-    enum class DragMode { none, move, length, velocity, marquee, loopEnd, keyboard, add, scrub };
+    enum class DragMode { none, move, length, velocity, marquee, loopEnd, keyboard, add, scrub, erase };
+
+    /** Right button (FL style): deletes the note under the mouse; dragging keeps erasing.
+        One undo step per gesture. */
+    void eraseAt (juce::Point<float> point);
+    bool eraseTransactionStarted = false;
 
     /** Ruler click/drag: moves the playhead to the timeline position of this content beat. */
     void seekToContentBeat (double contentBeat);

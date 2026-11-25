@@ -499,8 +499,39 @@ void PianoRoll::cancelDrag (bool restoreSelection)
     repaint();
 }
 
+void PianoRoll::eraseAt (juce::Point<float> point)
+{
+    if (! gridBounds().contains (point))
+        return;
+
+    const auto note = noteAt (point, false);
+    if (! note.isValid())
+        return;
+
+    if (! eraseTransactionStarted)
+    {
+        project.beginTransaction ("Delete notes");
+        eraseTransactionStarted = true;
+    }
+
+    selection.erase (std::remove (selection.begin(), selection.end(), note), selection.end());
+    project.deleteNote (note);
+    repaint();
+}
+
 void PianoRoll::mouseDown (const juce::MouseEvent& event)
 {
+    if (event.mods.isRightButtonDown() && hasClip())
+    {
+        cancelDrag();
+        validateSelection();
+        drag.mode = DragMode::erase;
+        drag.anchor = drag.current = event.position;
+        eraseTransactionStarted = false;
+        eraseAt (event.position);
+        return;
+    }
+
     if (! event.mods.isLeftButtonDown())
         return;
     cancelDrag();
@@ -705,6 +736,11 @@ void PianoRoll::mouseDrag (const juce::MouseEvent& event)
 {
     if (drag.mode == DragMode::none || ! hasClip())
         return;
+    if (drag.mode == DragMode::erase)
+    {
+        eraseAt (event.position);
+        return;
+    }
     if (! drag.moved && event.getDistanceFromDragStart() < 3)
         return;
     drag.moved = true;
@@ -716,6 +752,12 @@ void PianoRoll::mouseUp (const juce::MouseEvent& event)
 {
     if (drag.mode == DragMode::none)
         return;
+    if (drag.mode == DragMode::erase)
+    {
+        drag.mode = DragMode::none;
+        eraseTransactionStarted = false;
+        return;
+    }
     validateSelection();
     if (drag.moved)
         updateDrag (event);
