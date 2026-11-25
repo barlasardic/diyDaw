@@ -39,6 +39,17 @@ their per-track components from ValueTree child-added/removed callbacks.
   Device; A W S E D F T G Y H U J K play notes, Z/X octave, C/V velocity (no modifiers).
 - Double-click empty space on a MIDI lane creates a one-bar clip; double-click a clip opens it.
 
+## Effects, loop and pattern mode
+- Insert effects (`engine/AudioEffect.h`, `engine/Effects.h`: EQ Three, Compressor, Reverb,
+  Delay) are effect `DEVICE`s on any track, after the instrument, before the fader. The model
+  keeps one engine instance per DEVICE (`Project::getEffectInstance`) and republishes an
+  `EffectChain` snapshot on every chain change. New effects are prepared on the message thread.
+- `Transport::setLoop/setLoopEnabled`: `advance()` may return a shorter block at the loop end;
+  `Engine::render` keeps asking. `Engine::setIsolatedTrack` renders one track only.
+- Pattern mode (FL style, PAT/SONG in the transport bar): loops the MIDI clip open in the piano
+  roll on its own (loop = clip range, isolated track). `SongPositionBar` under the transport bar
+  shows and scrubs the song (or pattern) position; the piano roll ruler also seeks.
+
 ## Arrangement view (interaction spec, Ableton-like)
 - Layout: TimeRuler across the top (offset by `TrackHeader::preferredWidth`), then one lane per
   track: TrackHeader on the left, clip lane on the right. Lanes ~64 px tall, vertical scroll

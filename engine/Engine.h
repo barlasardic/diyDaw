@@ -45,6 +45,15 @@ public:
     float getMasterGainDb() const noexcept   { return masterGainDb.load(); }
     PeakMeter& getMasterMeter() noexcept     { return masterMeter; }
 
+    /** Pattern mode: only this track is rendered (-1 = all tracks). */
+    void setIsolatedTrack (int index) noexcept { isolatedTrack.store (index); }
+    int getIsolatedTrack() const noexcept { return isolatedTrack.load(); }
+
+    /** The sample rate / block size of the last prepare(), for preparing new effects on the
+        message thread. */
+    double getPreparedSampleRate() const noexcept { return preparedSampleRate.load(); }
+    int getPreparedBlockSize() const noexcept { return preparedBlockSize.load(); }
+
     /** Frees resources the audio thread has finished with. Call from a UI timer. */
     void collectGarbage();
 
@@ -57,7 +66,7 @@ public:
     void render (juce::AudioBuffer<float>& out, int numSamples) noexcept;
 
 private:
-    void renderChunk (juce::AudioBuffer<float>& out, int startSample, int numSamples) noexcept;
+    void renderBlock (juce::AudioBuffer<float>& out, int startSample, const Transport::Block& block) noexcept;
 
     Transport transport;
     Metronome metronome;
@@ -65,6 +74,9 @@ private:
     std::atomic<int> numTracks { 0 };
 
     std::atomic<float> masterGainDb { 0.0f };
+    std::atomic<int> isolatedTrack { -1 };
+    std::atomic<double> preparedSampleRate { 44100.0 };
+    std::atomic<int> preparedBlockSize { 512 };
     PeakMeter masterMeter;
 
     // audio thread only

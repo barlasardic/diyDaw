@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Instrument.h"
+#include "ParamInfo.h"
 
 #include <array>
 #include <atomic>
@@ -39,15 +40,7 @@ public:
         numParams
     };
 
-    struct ParamInfo
-    {
-        const char* id;          // stable identifier, used in project files
-        const char* name;        // display name
-        float minValue, maxValue, defaultValue;
-        float centreValue;       // value at the middle of a knob's travel (for skewed ranges)
-        bool stepped;            // integer steps
-        const char* unit;        // "Hz", "s", "dB", "st", "ct", "%" or ""
-    };
+    using ParamInfo = daw::ParamInfo;
 
     static const std::array<ParamInfo, numParams>& getParamInfos();
 

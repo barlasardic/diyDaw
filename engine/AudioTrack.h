@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AudioEffect.h"
 #include "Clip.h"
 #include "PeakMeter.h"
 #include "RealtimeSwap.h"
@@ -59,8 +60,12 @@ public:
     /** Replace the track's clip layout. Clips must be sorted by startBeat. */
     void setClips (std::unique_ptr<ClipList> newClips) { clips.publish (std::move (newClips)); }
 
-    /** Free clip lists (and samples) the audio thread has finished with. Call regularly. */
-    void collectGarbage() { clips.collectGarbage(); }
+    /** Replace the insert effects (processed in order, before the fader). Every effect must
+        already be prepared at the engine's current sample rate. */
+    void setEffects (std::unique_ptr<EffectChain> chain) { effects.publish (std::move (chain)); }
+
+    /** Free clip lists, samples and effect chains the audio thread has finished with. */
+    void collectGarbage() { clips.collectGarbage(); effects.collectGarbage(); }
 
     PeakMeter& getMeter() noexcept { return meter; }
 
@@ -93,6 +98,7 @@ private:
     std::atomic<bool> mute { false }, solo { false };
 
     RealtimeSwap<ClipList> clips;
+    RealtimeSwap<EffectChain> effects;
     PeakMeter meter;
 
     std::atomic<bool> instrumentEnabled { false };

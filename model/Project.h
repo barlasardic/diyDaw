@@ -40,7 +40,8 @@ namespace ids
     DAW_DECLARE_ID (loopLength)  // CLIP (midi): loop length in beats (content wraps when 'loop')
     DAW_DECLARE_ID (pitch)       // NOTE: MIDI note number
     DAW_DECLARE_ID (velocity)    // NOTE: 0..1
-    DAW_DECLARE_ID (type)        // DEVICE: "synth"
+    DAW_DECLARE_ID (type)        // DEVICE: "synth", "eq", "compressor", "reverb", "delay"
+    DAW_DECLARE_ID (enabled)     // DEVICE (effects): bool, false = bypassed
     #undef DAW_DECLARE_ID
 }
 
@@ -51,10 +52,12 @@ namespace ids
             CLIP { kind="audio", name, file, start, length, offset (seconds), loop }
             CLIP { kind="midi", name, start, length, offsetBeats, loop, loopLength }
               NOTE { pitch, start, length, velocity }      (start: content beats)
-            DEVICE { type="synth", <Synth param id>=value ... }   (MIDI tracks only)
+            DEVICE { type="synth", <Synth param id>=value ... }   (MIDI tracks only, first)
+            DEVICE { type="eq"|"compressor"|"reverb"|"delay", enabled, <param id>=value ... }
 
-    A track's children are its CLIPs plus, on MIDI tracks, one DEVICE; use isClip() when
-    iterating. Audio clips live on audio tracks and MIDI clips on MIDI tracks only.
+    A track's children are its CLIPs plus its DEVICEs (the device chain, in order: the
+    instrument on MIDI tracks, then insert effects); use isClip() / isEffect() when iterating.
+    Audio clips live on audio tracks and MIDI clips on MIDI tracks only.
 
     The tree is the single source of truth: every change (including undo/redo and loading a
     file) is pushed to the Engine immediately: clip edits as a fresh ClipList snapshot,
@@ -146,12 +149,31 @@ public:
     static bool isTrackMuted (const juce::ValueTree& track)  { return track[ids::mute]; }
     static bool isTrackSoloed (const juce::ValueTree& track) { return track[ids::solo]; }
 
-    // ---- instrument (MIDI tracks; undoable) -----------------------------------
-    static juce::ValueTree getDevice (const juce::ValueTree& track) { return track.getChildWithName (ids::DEVICE); }
+    // ---- devices (undoable) ---------------------------------------------------
+    /** The instrument DEVICE of a MIDI track (invalid for audio tracks). */
+    static juce::ValueTree getDevice (const juce::ValueTree& track);
 
-    /** Sets a Synth parameter (index into Synth::getParamInfos()); clamped like Synth does. */
-    void setDeviceParam (juce::ValueTree track, int paramIndex, float value);
-    static float getDeviceParam (const juce::ValueTree& track, int paramIndex);
+    /** Sets a parameter of a DEVICE (or, given a TRACK, of its instrument); clamped/stepped
+        like the device does. 'paramIndex' indexes getDeviceParamInfos(). */
+    void setDeviceParam (juce::ValueTree deviceOrTrack, int paramIndex, float value);
+    static float getDeviceParam (const juce::ValueTree& deviceOrTrack, int paramIndex);
+    static const std::vector<ParamInfo>& getDeviceParamInfos (const juce::ValueTree& device);
+    static juce::String getDeviceType (const juce::ValueTree& device) { return device[ids::type].toString(); }
+
+    // Insert effects: any track; processed in order after the clips / instrument, before the fader.
+    static bool isEffect (const juce::ValueTree& tree) { return tree.hasType (ids::DEVICE) && getDeviceType (tree) != "synth"; }
+    juce::Array<juce::ValueTree> getEffects (const juce::ValueTree& track) const;
+
+    /** Adds an effect of a type from getEffectTypes() at position 'index' among the track's
+        effects (-1 = end). Returns the DEVICE, or invalid for an unknown type. */
+    juce::ValueTree addEffect (juce::ValueTree track, const juce::String& type, int index = -1);
+    void removeEffect (juce::ValueTree device);
+    void moveEffect (juce::ValueTree device, int newIndex);  // index among the track's effects
+    void setEffectEnabled (juce::ValueTree device, bool shouldBeEnabled);
+    static bool isEffectEnabled (const juce::ValueTree& device) { return device.getProperty (ids::enabled, true); }
+
+    /** The live engine instance behind an effect DEVICE (for meters such as gain reduction). */
+    std::shared_ptr<AudioEffect> getEffectInstance (const juce::ValueTree& device) const;
 
     // ---- clips (all undoable) -------------------------------------------------
     static bool isClip (const juce::ValueTree& tree)     { return tree.hasType (ids::CLIP); }
@@ -234,6 +256,8 @@ private:
     void syncTrack (const juce::ValueTree& track);
     void syncTrackMixer (const juce::ValueTree& track);
     void syncDevice (const juce::ValueTree& track);
+    void syncEffects (const juce::ValueTree& track);
+    void valueTreeChildOrderChanged (juce::ValueTree& parent, int oldIndex, int newIndex) override;
     static juce::ValueTree makeDevice();
     void syncProjectProperties();
     /** Swaps in a new set of tracks (and PROJECT properties) without undo; resets the engine. */
@@ -249,6 +273,10 @@ private:
     juce::ValueTree state { ids::PROJECT };
     juce::UndoManager undoManager;
     juce::File documentFile;
+
+    // Engine instances of effect DEVICEs (kept so an effect keeps its state, e.g. a reverb
+    // tail, when the chain around it changes). Message thread only.
+    std::vector<std::pair<juce::ValueTree, std::shared_ptr<AudioEffect>>> effectInstances;
     bool unsavedChanges = false;
 
     JUCE_DECLARE_NON_COPYABLE (Project)

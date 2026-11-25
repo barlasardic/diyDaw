@@ -21,6 +21,11 @@ public:
     void refresh();
 
     std::function<void()> onFileMenu; // the owner shows the menu (it owns the file actions)
+    std::function<void()> onPlay;     // play pressed (the owner decides where to start)
+    std::function<void()> onStop;     // stop pressed
+    std::function<void (bool pattern)> onModeChanged; // Pattern / Song switch (FL style)
+
+    void setPatternMode (bool isPattern);
     std::function<void()> onAddTrack;
     std::function<void()> onAddMidiTrack;
     std::function<void()> onAudioSettings;
@@ -47,6 +52,7 @@ private:
     juce::Slider bpmSlider;
     juce::Label bpmCaption { {}, "BPM" };
     juce::TextButton metronomeButton { "Click" };
+    juce::TextButton patternButton { "PAT" }, songButton { "SONG" };
     juce::Label positionLabel;
     juce::TextButton addTrackButton { "+ Audio" };
     juce::TextButton addMidiTrackButton { "+ MIDI" };

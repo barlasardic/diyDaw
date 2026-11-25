@@ -25,6 +25,9 @@ public:
     explicit SynthPanel (Project& project);
     ~SynthPanel() override;
 
+    /** Width the device chain gives the instrument, wide enough for all knob columns. */
+    static constexpr int preferredWidth = 880;
+
     /** The MIDI track whose synth to show, or invalid for an empty panel. */
     void setTrack (juce::ValueTree track);
     juce::ValueTree getTrack() const { return track; }

@@ -20,8 +20,9 @@ public:
         // offscreen and exits (for visual checks). Audio file i is placed on track i, staggered
         // by one bar; a project file is opened instead (its samples decoded synchronously).
         auto args = juce::StringArray::fromTokens (commandLine, true);
-        // `--dialog export|pianoroll|synth` snapshots that panel instead of the main window:
-        // the Export Audio dialog, or the detail view showing the first MIDI clip / MIDI track.
+        // `--dialog export|pianoroll|synth|devices` snapshots that panel instead of the main window:
+        // the Export Audio dialog, or the detail view showing the first MIDI clip / the first MIDI
+        // track's device chain (synth and devices are the same view).
         juce::String dialogName;
         if (const auto d = args.indexOf ("--dialog"); d >= 0)
         {
@@ -76,7 +77,7 @@ public:
             std::unique_ptr<juce::Component> dialog;
             if (dialogName == "export")
                 dialog = std::make_unique<ExportDialog> (ui.getProject(), 44100.0);
-            else if (dialogName == "pianoroll" || dialogName == "synth")
+            else if (dialogName == "pianoroll" || dialogName == "synth" || dialogName == "devices")
             {
                 auto detail = std::make_unique<DetailView> (ui.getProject());
                 detail->setBounds (ui.getLocalBounds());
@@ -96,7 +97,7 @@ public:
                     break;
                 }
 
-                detail->setTab (dialogName == "synth" ? DetailView::Tab::device : DetailView::Tab::clip);
+                detail->setTab (dialogName == "pianoroll" ? DetailView::Tab::clip : DetailView::Tab::device);
                 detail->refresh();
                 dialog = std::move (detail);
             }

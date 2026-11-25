@@ -4,7 +4,7 @@
 namespace daw
 {
 
-DetailView::DetailView (Project& p) : project (p), pianoRoll (p), synthPanel (p)
+DetailView::DetailView (Project& p) : project (p), pianoRoll (p), deviceChain (p)
 {
     for (auto* b : { &clipTab, &deviceTab })
     {
@@ -27,7 +27,7 @@ DetailView::DetailView (Project& p) : project (p), pianoRoll (p), synthPanel (p)
     };
 
     addChildComponent (pianoRoll);
-    addChildComponent (synthPanel);
+    addChildComponent (deviceChain);
     updateVisibility();
 }
 
@@ -44,7 +44,7 @@ void DetailView::showClip (juce::ValueTree newClip)
 void DetailView::showTrack (juce::ValueTree newTrack)
 {
     track = newTrack;
-    synthPanel.setTrack (Project::isMidiTrack (track) ? track : juce::ValueTree());
+    deviceChain.setTrack (track);
 
     if (clip.isValid() && clip.getParent() != track)
     {
@@ -73,13 +73,13 @@ void DetailView::updateVisibility()
     if (track.isValid() && project.indexOfTrack (track) < 0)
     {
         track = {};
-        synthPanel.setTrack ({});
+        deviceChain.setTrack ({});
     }
 
     clipTab.setToggleState (tab == Tab::clip, juce::dontSendNotification);
     deviceTab.setToggleState (tab == Tab::device, juce::dontSendNotification);
     pianoRoll.setVisible (tab == Tab::clip && Project::isMidiClip (clip));
-    synthPanel.setVisible (tab == Tab::device && Project::isMidiTrack (track));
+    deviceChain.setVisible (tab == Tab::device && track.isValid());
     repaint();
 }
 
@@ -91,8 +91,8 @@ void DetailView::refresh()
     if (pianoRoll.isVisible())
         pianoRoll.refresh();
 
-    if (synthPanel.isVisible())
-        synthPanel.refresh();
+    if (deviceChain.isVisible())
+        deviceChain.refresh();
 }
 
 void DetailView::paint (juce::Graphics& g)
@@ -116,7 +116,7 @@ void DetailView::paint (juce::Graphics& g)
     if (tab == Tab::clip && clip.isValid())
         title = Project::getClipName (clip) + "  -  " + track[ids::name].toString();
     else if (track.isValid())
-        title = track[ids::name].toString() + (Project::isMidiTrack (track) ? "  -  Synth" : "");
+        title = track[ids::name].toString() + "  -  Devices";
 
     g.setColour (colours::text);
     g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
@@ -129,8 +129,8 @@ void DetailView::paint (juce::Graphics& g)
     if (tab == Tab::clip && ! Project::isMidiClip (clip))
         hint = clip.isValid() ? "Audio clip editing is not available yet."
                               : "Double-click a MIDI clip to edit its notes. Double-click an empty spot on a MIDI track to create one.";
-    else if (tab == Tab::device && ! Project::isMidiTrack (track))
-        hint = track.isValid() ? "Audio tracks have no instrument." : "Select a MIDI track to see its instrument.";
+    else if (tab == Tab::device && ! track.isValid())
+        hint = "Select a track to see its devices.";
 
     if (hint.isNotEmpty())
     {
@@ -149,7 +149,7 @@ void DetailView::resized()
     deviceTab.setBounds (header.removeFromLeft (64));
 
     pianoRoll.setBounds (area);
-    synthPanel.setBounds (area);
+    deviceChain.setBounds (area);
 }
 
 } // namespace daw

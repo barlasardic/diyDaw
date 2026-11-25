@@ -47,13 +47,24 @@ public:
     /** Request a jump; applied at the start of the next audio block. */
     void setPositionBeats (double beats) noexcept;
 
+    /** Loop region in beats. While enabled and playing, a block that would cross loopEnd is
+        cut short there and the playhead continues at loopStart (only when it reaches loopEnd from
+        before it; starting after the loop end just plays on). */
+    void setLoop (double startBeat, double endBeat) noexcept;
+    void setLoopEnabled (bool shouldLoop) noexcept { loopEnabled.store (shouldLoop); }
+    bool isLoopEnabled() const noexcept { return loopEnabled.load(); }
+    double getLoopStart() const noexcept { return loopStart.load(); }
+    double getLoopEnd() const noexcept   { return loopEnd.load(); }
+
     /** Playhead position as last written by the audio thread (or the pending seek target). */
     double getPositionBeats() const noexcept;
 
     // ---- audio thread -----------------------------------------------------
     void prepare (double newSampleRate) noexcept { sampleRate = newSampleRate; }
 
-    /** Returns timing for the next block of numSamples and moves the playhead past it. */
+    /** Returns timing for the next block of at most numSamples and moves the playhead past it.
+        The block is shorter than requested (but at least 1 sample) when it reaches the loop end;
+        callers loop until they have rendered everything. */
     Block advance (int numSamples) noexcept;
 
 private:
@@ -64,6 +75,9 @@ private:
     std::atomic<double> positionBeats { 0.0 };
     std::atomic<double> seekTarget { 0.0 };
     std::atomic<bool> seekRequested { false };
+
+    std::atomic<bool> loopEnabled { false };
+    std::atomic<double> loopStart { 0.0 }, loopEnd { 4.0 };
 
     double sampleRate = 44100.0; // audio thread only
 };

@@ -136,9 +136,21 @@ namespace
         }
         else if (tree.hasType (ids::DEVICE))
         {
-            for (const auto& info : Synth::getParamInfos())
-                if (info.id != nullptr && tree.hasProperty (info.id))
-                    tree.setProperty (info.id, parseExactDouble (tree[info.id]), nullptr);
+            for (const auto& info : Project::getDeviceParamInfos (tree))
+            {
+                if (info.id == nullptr || ! tree.hasProperty (info.id))
+                    continue;
+
+                // Same clamping and stepping as setDeviceParam / the devices themselves.
+                auto value = juce::jlimit ((double) info.minValue, (double) info.maxValue, parseExactDouble (tree[info.id]));
+                if (info.stepped)
+                    value = std::round (value);
+
+                tree.setProperty (info.id, value, nullptr);
+            }
+
+            if (Project::isEffect (tree))
+                tree.setProperty (ids::enabled, (bool) tree.getProperty (ids::enabled, true), nullptr);
         }
 
         for (auto child : tree)
@@ -181,6 +193,7 @@ juce::String Project::replaceContents (const juce::ValueTree& newState)
     undoManager.clearUndoHistory();
     state.removeAllChildren (nullptr);
     engine.resetTracks();
+    effectInstances.clear();
 
     state.setProperty (ids::version, fileFormatVersion, nullptr);
     state.setProperty (ids::bpm, juce::jlimit (Transport::minBpm, Transport::maxBpm,
@@ -215,20 +228,26 @@ juce::String Project::replaceContents (const juce::ValueTree& newState)
             track.setProperty (ids::colour, makeTrack (getNumTracks() + 1)[ids::colour], nullptr);
 
         // Enforce the structure the rest of the code trusts: clips of the track's kind,
-        // and exactly one DEVICE on MIDI tracks.
+        // exactly one synth DEVICE on MIDI tracks (first device), effects of known types.
         const auto midi = isMidiTrack (track);
         track.setProperty (ids::kind, midi ? "midi" : "audio", nullptr);
         auto haveDevice = false;
 
-        for (int i = track.getNumChildren(); --i >= 0;)
+        for (int i = 0; i < track.getNumChildren(); ++i)
         {
             const auto child = track.getChild (i);
+            const auto isSynth = child.hasType (ids::DEVICE) && getDeviceType (child) == "synth";
             const auto keep = (child.hasType (ids::CLIP) && isMidiClip (child) == midi)
-                           || (midi && child.hasType (ids::DEVICE) && ! haveDevice);
-            haveDevice = haveDevice || (keep && child.hasType (ids::DEVICE));
+                           || (midi && isSynth && ! haveDevice)
+                           || (isEffect (child) && getEffectTypes().contains (getDeviceType (child)));
+            haveDevice = haveDevice || (keep && isSynth);
 
             if (! keep)
-                track.removeChild (i, nullptr);
+            {
+                track.removeChild (i--, nullptr);
+                continue;
+            }
+
             else if (isMidiClip (child))
                 for (int n = child.getNumChildren(); --n >= 0;)
                     if (! child.getChild (n).hasType (ids::NOTE))
@@ -236,7 +255,15 @@ juce::String Project::replaceContents (const juce::ValueTree& newState)
         }
 
         if (midi && ! haveDevice)
-            track.appendChild (makeDevice(), nullptr);
+            track.addChild (makeDevice(), 0, nullptr);
+
+        // The instrument comes first in the device chain.
+        if (midi)
+            if (const auto synthDevice = getDevice (track); track.indexOf (synthDevice) > 0)
+            {
+                track.removeChild (synthDevice, nullptr);
+                track.addChild (synthDevice, 0, nullptr);
+            }
 
         state.appendChild (track, nullptr);
     }
@@ -423,13 +450,33 @@ void Project::setTrackSolo (juce::ValueTree track, bool shouldSolo)
         track.setProperty (ids::solo, shouldSolo, &undoManager);
 }
 
-void Project::setDeviceParam (juce::ValueTree track, int paramIndex, float value)
+juce::ValueTree Project::getDevice (const juce::ValueTree& track)
 {
-    auto device = getDevice (track);
-    if (! device.isValid() || paramIndex < 0 || paramIndex >= Synth::numParams)
+    for (const auto& child : track)
+        if (child.hasType (ids::DEVICE) && getDeviceType (child) == "synth")
+            return child;
+
+    return {};
+}
+
+const std::vector<ParamInfo>& Project::getDeviceParamInfos (const juce::ValueTree& device)
+{
+    static const std::vector<ParamInfo> synthInfos (Synth::getParamInfos().begin(), Synth::getParamInfos().end());
+
+    if (getDeviceType (device) == "synth")
+        return synthInfos;
+
+    return getEffectParamInfos (getDeviceType (device));
+}
+
+void Project::setDeviceParam (juce::ValueTree deviceOrTrack, int paramIndex, float value)
+{
+    auto device = deviceOrTrack.hasType (ids::TRACK) ? getDevice (deviceOrTrack) : deviceOrTrack;
+    const auto& infos = getDeviceParamInfos (device);
+    if (! device.hasType (ids::DEVICE) || paramIndex < 0 || paramIndex >= (int) infos.size())
         return;
 
-    const auto& info = Synth::getParamInfos()[(size_t) paramIndex];
+    const auto& info = infos[(size_t) paramIndex];
     if (info.id == nullptr)
         return;
 
@@ -440,16 +487,134 @@ void Project::setDeviceParam (juce::ValueTree track, int paramIndex, float value
     device.setProperty (info.id, (double) value, &undoManager);
 }
 
-float Project::getDeviceParam (const juce::ValueTree& track, int paramIndex)
+float Project::getDeviceParam (const juce::ValueTree& deviceOrTrack, int paramIndex)
 {
-    if (paramIndex < 0 || paramIndex >= Synth::numParams)
+    const auto device = deviceOrTrack.hasType (ids::TRACK) ? getDevice (deviceOrTrack) : deviceOrTrack;
+    const auto& infos = getDeviceParamInfos (device);
+    if (paramIndex < 0 || paramIndex >= (int) infos.size())
         return 0.0f;
 
-    const auto& info = Synth::getParamInfos()[(size_t) paramIndex];
+    const auto& info = infos[(size_t) paramIndex];
     if (info.id == nullptr)
         return 0.0f;
 
-    return (float) getDevice (track).getProperty (info.id, info.defaultValue);
+    return (float) device.getProperty (info.id, info.defaultValue);
+}
+
+// ---- effects ----------------------------------------------------------------------
+
+juce::Array<juce::ValueTree> Project::getEffects (const juce::ValueTree& track) const
+{
+    juce::Array<juce::ValueTree> result;
+    for (const auto& child : track)
+        if (isEffect (child))
+            result.add (child);
+    return result;
+}
+
+juce::ValueTree Project::addEffect (juce::ValueTree track, const juce::String& effectType, int index)
+{
+    if (! track.hasType (ids::TRACK) || ! getEffectTypes().contains (effectType))
+        return {};
+
+    juce::ValueTree device (ids::DEVICE);
+    device.setProperty (ids::type, effectType, nullptr);
+    device.setProperty (ids::enabled, true, nullptr);
+
+    for (const auto& info : getEffectParamInfos (effectType))
+        device.setProperty (info.id, (double) info.defaultValue, nullptr);
+
+    // Insert among the effects: before the index-th effect, or after the last device.
+    const auto effects = getEffects (track);
+    int childIndex = -1;
+
+    if (index >= 0 && index < effects.size())
+        childIndex = track.indexOf (effects[index]);
+    else if (! effects.isEmpty())
+        childIndex = track.indexOf (effects.getLast()) + 1;
+    else if (const auto instrument = getDevice (track); instrument.isValid())
+        childIndex = track.indexOf (instrument) + 1;
+
+    track.addChild (device, childIndex, &undoManager);
+    return device;
+}
+
+void Project::removeEffect (juce::ValueTree device)
+{
+    auto track = device.getParent();
+    if (isEffect (device) && track.isValid())
+        track.removeChild (device, &undoManager);
+}
+
+void Project::moveEffect (juce::ValueTree device, int newIndex)
+{
+    auto track = device.getParent();
+    if (! isEffect (device) || ! track.isValid())
+        return;
+
+    const auto effects = getEffects (track);
+    newIndex = juce::jlimit (0, effects.size() - 1, newIndex);
+    if (effects.indexOf (device) == newIndex)
+        return;
+
+    track.moveChild (track.indexOf (device), track.indexOf (effects[newIndex]), &undoManager);
+}
+
+void Project::setEffectEnabled (juce::ValueTree device, bool shouldBeEnabled)
+{
+    if (isEffect (device))
+        device.setProperty (ids::enabled, shouldBeEnabled, &undoManager);
+}
+
+std::shared_ptr<AudioEffect> Project::getEffectInstance (const juce::ValueTree& device) const
+{
+    for (const auto& [tree, instance] : effectInstances)
+        if (tree == device)
+            return instance;
+
+    return nullptr;
+}
+
+void Project::syncEffects (const juce::ValueTree& track)
+{
+    if (! track.hasType (ids::TRACK))
+        return;
+
+    auto chain = std::make_unique<EffectChain>();
+
+    for (const auto& device : getEffects (track))
+    {
+        auto instance = getEffectInstance (device);
+
+        if (instance == nullptr)
+        {
+            instance = createEffect (getDeviceType (device));
+            if (instance == nullptr)
+                continue;
+
+            instance->prepare (engine.getPreparedSampleRate(), engine.getPreparedBlockSize());
+            effectInstances.emplace_back (device, instance);
+        }
+
+        const auto& infos = instance->getParamInfos();
+        for (int i = 0; i < (int) infos.size(); ++i)
+            instance->setParam (i, getDeviceParam (device, i));
+
+        instance->setEnabled (isEffectEnabled (device));
+        chain->effects.push_back (std::move (instance));
+    }
+
+    getEngineTrack (track).setEffects (std::move (chain));
+
+    // Forget instances whose DEVICE is no longer in the project (an undo that brings one back
+    // gets a fresh instance). The engine keeps its own references until it's done with them.
+    effectInstances.erase (std::remove_if (effectInstances.begin(), effectInstances.end(),
+                                           [this] (const auto& entry)
+                                           {
+                                               const auto parent = entry.first.getParent();
+                                               return ! parent.isValid() || indexOfTrack (parent) < 0;
+                                           }),
+                           effectInstances.end());
 }
 
 void Project::syncDevice (const juce::ValueTree& track)
@@ -463,6 +628,8 @@ void Project::syncDevice (const juce::ValueTree& track)
     if (isMidiTrack (track))
         for (int i = 0; i < Synth::numParams; ++i)
             t.getSynth().setParam (i, getDeviceParam (track, i));
+
+    syncEffects (track);
 }
 
 void Project::syncTrackMixer (const juce::ValueTree& track)
@@ -857,10 +1024,25 @@ void Project::valueTreePropertyChanged (juce::ValueTree& tree, const juce::Ident
     else if (tree.hasType (ids::DEVICE))
     {
         const auto track = tree.getParent();
-        const auto& infos = Synth::getParamInfos();
-        for (int i = 0; i < Synth::numParams; ++i)
-            if (infos[(size_t) i].id != nullptr && property == juce::Identifier (infos[(size_t) i].id))
-                getEngineTrack (track).getSynth().setParam (i, getDeviceParam (track, i));
+        if (! track.hasType (ids::TRACK))
+            return;
+
+        const auto& infos = getDeviceParamInfos (tree);
+        const auto instance = isEffect (tree) ? getEffectInstance (tree) : nullptr;
+
+        if (property == ids::enabled && instance != nullptr)
+            instance->setEnabled (isEffectEnabled (tree));
+
+        for (int i = 0; i < (int) infos.size(); ++i)
+        {
+            if (infos[(size_t) i].id == nullptr || property != juce::Identifier (infos[(size_t) i].id))
+                continue;
+
+            if (instance != nullptr)
+                instance->setParam (i, getDeviceParam (tree, i));
+            else if (! isEffect (tree))
+                getEngineTrack (track).getSynth().setParam (i, getDeviceParam (tree, i));
+        }
     }
     else if (tree.hasType (ids::TRACK))
     {
@@ -907,10 +1089,22 @@ void Project::valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree& chi
     }
 }
 
-void Project::valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree&, int)
+void Project::valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree& child, int)
 {
     unsavedChanges = true;
-    syncTrack (parent.hasType (ids::CLIP) ? parent.getParent() : parent);
+
+    if (parent.hasType (ids::TRACK) && child.hasType (ids::DEVICE))
+        syncEffects (parent);
+    else
+        syncTrack (parent.hasType (ids::CLIP) ? parent.getParent() : parent);
+}
+
+void Project::valueTreeChildOrderChanged (juce::ValueTree& parent, int, int)
+{
+    unsavedChanges = true;
+
+    if (parent.hasType (ids::TRACK))
+        syncEffects (parent);
 }
 
 } // namespace daw

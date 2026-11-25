@@ -27,6 +27,10 @@
       <NOTE pitch="67" start="13" length="1" velocity="0.9"/>
       <NOTE pitch="69" start="14" length="2" velocity="0.9"/>
     </CLIP>
+    <DEVICE type="eq" enabled="1"/>
+    <DEVICE type="compressor" enabled="1"/>
+    <DEVICE type="reverb" enabled="1"/>
+    <DEVICE type="delay" enabled="0"/>
   </TRACK>
   <TRACK kind="midi" name="2 MIDI" colour="ff3dc8ff" gain="0" pan="0" mute="0" solo="0">
     <CLIP kind="midi" name="Bass" start="16" length="8" offsetBeats="0" loop="1" loopLength="4">

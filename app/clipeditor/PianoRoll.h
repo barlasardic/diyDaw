@@ -60,7 +60,10 @@ public:
     void resized() override;
 
 private:
-    enum class DragMode { none, move, length, velocity, marquee, loopEnd, keyboard, add };
+    enum class DragMode { none, move, length, velocity, marquee, loopEnd, keyboard, add, scrub };
+
+    /** Ruler click/drag: moves the playhead to the timeline position of this content beat. */
+    void seekToContentBeat (double contentBeat);
 
     struct NoteState
     {

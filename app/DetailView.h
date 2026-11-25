@@ -1,7 +1,7 @@
 #pragma once
 
 #include "PianoRoll.h"
-#include "SynthPanel.h"
+#include "DeviceChain.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -11,7 +11,8 @@ namespace daw
 {
 
 /** Ableton's bottom "detail view": a header with the selected clip / track name and two
-    tabs, Clip (piano roll of a MIDI clip) and Device (the MIDI track's synth).
+    tabs, Clip (piano roll of a MIDI clip) and Device (the track's device chain: instrument
+    and effects).
     Message thread only. */
 class DetailView : public juce::Component
 {
@@ -40,7 +41,8 @@ public:
     static constexpr int headerHeight = 26;
 
     PianoRoll& getPianoRoll() noexcept { return pianoRoll; }
-    SynthPanel& getSynthPanel() noexcept { return synthPanel; }
+    const PianoRoll& getPianoRoll() const noexcept { return pianoRoll; }
+    DeviceChain& getDeviceChain() noexcept { return deviceChain; }
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -54,7 +56,7 @@ private:
 
     juce::TextButton clipTab { "Clip" }, deviceTab { "Device" };
     PianoRoll pianoRoll;
-    SynthPanel synthPanel;
+    DeviceChain deviceChain;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DetailView)
 };

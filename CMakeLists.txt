@@ -17,7 +17,9 @@ add_subdirectory(external/JUCE EXCLUDE_FROM_ALL)
 # ---------------------------------------------------------------------------
 add_library(daw_engine INTERFACE)
 target_sources(daw_engine INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/AudioEffect.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/AudioTrack.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/Effects.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/Engine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/Metronome.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/SampleData.cpp
@@ -56,7 +58,9 @@ if(DAW_BUILD_TESTS)
         tests/PersistenceTests.cpp
         tests/ExportTests.cpp
         tests/SynthTests.cpp
-        tests/MidiTests.cpp)
+        tests/MidiTests.cpp
+        tests/EffectsTests.cpp
+        tests/DeviceChainTests.cpp)
     target_compile_definitions(DawEngineTests PRIVATE ${DAW_COMMON_DEFINITIONS})
     target_link_libraries(DawEngineTests PRIVATE
         daw_model
@@ -79,6 +83,7 @@ if(DAW_BUILD_APP)
         app/Main.cpp
         app/MainComponent.cpp
         app/ExportDialog.cpp
+        app/SongPositionBar.cpp
         app/TransportBar.cpp
         app/TrackStrip.cpp
         app/LevelMeter.cpp
@@ -89,6 +94,7 @@ if(DAW_BUILD_APP)
         app/arrangement/TrackHeader.cpp
         app/clipeditor/PianoRoll.cpp
         app/devices/SynthPanel.cpp
+        app/devices/DeviceChain.cpp
         app/DetailView.cpp)
     target_include_directories(DiyDaw PRIVATE app app/arrangement app/clipeditor app/devices)
     target_compile_definitions(DiyDaw PRIVATE

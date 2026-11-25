@@ -36,6 +36,7 @@ void Engine::resetTracks()
         t->setMute (false);
         t->setSolo (false);
         t->setInstrumentEnabled (false);
+        t->setEffects (std::make_unique<EffectChain>());
         t->setName ("Audio");
     }
 }
@@ -49,6 +50,8 @@ void Engine::collectGarbage()
 void Engine::prepare (double newSampleRate, int maxBlockSize)
 {
     sampleRate = newSampleRate;
+    preparedSampleRate.store (newSampleRate);
+    preparedBlockSize.store (maxBlockSize);
     bus.setSize (2, maxBlockSize, false, false, true);
     transport.prepare (sampleRate);
     metronome.prepare (sampleRate);
@@ -68,23 +71,30 @@ void Engine::render (juce::AudioBuffer<float>& out, int numSamples) noexcept
     if (chunk == 0) // not prepared yet
         return;
 
-    for (int start = 0; start < numSamples; start += chunk)
-        renderChunk (out, start, juce::jmin (chunk, numSamples - start));
+    // The transport may hand out shorter blocks (loop end), so keep asking until done.
+    for (int start = 0; start < numSamples;)
+    {
+        const auto block = transport.advance (juce::jmin (chunk, numSamples - start));
+        renderBlock (out, start, block);
+        start += juce::jmax (1, block.numSamples);
+    }
 }
 
-void Engine::renderChunk (juce::AudioBuffer<float>& out, int startSample, int numSamples) noexcept
+void Engine::renderBlock (juce::AudioBuffer<float>& out, int startSample, const Transport::Block& block) noexcept
 {
+    const auto numSamples = block.numSamples;
     bus.clear (0, numSamples);
 
-    const auto block = transport.advance (numSamples);
     const auto activeTracks = numTracks.load (std::memory_order_acquire);
+    const auto isolated = isolatedTrack.load (std::memory_order_relaxed);
 
     bool anySolo = false;
     for (int i = 0; i < activeTracks; ++i)
         anySolo = anySolo || tracks[(size_t) i]->isSoloed();
 
     for (int i = 0; i < activeTracks; ++i)
-        tracks[(size_t) i]->process (bus, block, anySolo);
+        if (isolated < 0 || isolated == i)
+            tracks[(size_t) i]->process (bus, block, anySolo && isolated < 0);
 
     const auto db = masterGainDb.load (std::memory_order_relaxed);
     masterGain.setTargetValue (db <= AudioTrack::minGainDb ? 0.0f : juce::Decibels::decibelsToGain (db));

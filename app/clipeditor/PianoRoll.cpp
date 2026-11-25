@@ -525,6 +525,14 @@ void PianoRoll::mouseDown (const juce::MouseEvent& event)
         return;
     }
 
+    // Clicking the ruler moves the playhead there (FL style); dragging scrubs.
+    if (event.position.y < (float) rulerHeight && event.position.x >= (float) keyboardWidth)
+    {
+        drag.mode = DragMode::scrub;
+        seekToContentBeat (event.mods.isAltDown() ? beatAt (event.position.x) : geometry.snap (beatAt (event.position.x)));
+        return;
+    }
+
     const auto inVelocity = velocityBounds().contains (event.position);
     if (! inVelocity && ! gridBounds().contains (event.position))
         return;
@@ -581,6 +589,30 @@ void PianoRoll::mouseDown (const juce::MouseEvent& event)
     repaint();
 }
 
+void PianoRoll::seekToContentBeat (double contentBeat)
+{
+    if (! hasClip())
+        return;
+
+    // Content beat -> first timeline position inside the clip that plays it.
+    const auto start = Project::getClipStart (clip);
+    const auto offset = Project::getClipOffsetBeats (clip);
+    const auto loop = Project::getClipLoopLength (clip);
+    auto timeline = start + contentBeat - offset;
+
+    if (Project::isClipLooping (clip) && loop > 0.0)
+    {
+        contentBeat = std::fmod (juce::jmax (0.0, contentBeat), loop);
+        timeline = start + contentBeat - offset;
+        if (timeline < start)
+            timeline += loop;
+    }
+
+    timeline = juce::jlimit (start, juce::jmax (start, Project::getClipEnd (clip) - 1.0e-6), timeline);
+    project.getEngine().getTransport().setPositionBeats (timeline);
+    refresh();
+}
+
 void PianoRoll::updateDrag (const juce::MouseEvent& event)
 {
     drag.current = event.position;
@@ -593,6 +625,11 @@ void PianoRoll::updateDrag (const juce::MouseEvent& event)
     if (drag.mode == DragMode::keyboard)
     {
         previewNote (pitchAt (event.position.y), 0.8f);
+        return;
+    }
+    if (drag.mode == DragMode::scrub)
+    {
+        seekToContentBeat (snap (beatAt (event.position.x)));
         return;
     }
     if (drag.mode == DragMode::marquee)

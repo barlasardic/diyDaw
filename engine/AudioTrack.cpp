@@ -11,6 +11,10 @@ void AudioTrack::prepare (double sampleRate, int maxBlockSize)
 {
     synth.prepare (sampleRate, maxBlockSize);
     synth.reset();
+
+    if (auto* chain = effects.acquire()) // audio is stopped while preparing
+        for (auto& e : chain->effects)
+            e->prepare (sampleRate, maxBlockSize);
     noteEndBeat.fill (-1.0);
     noteOnIndex.fill (-1);
     numEvents = 0;
@@ -105,6 +109,10 @@ void AudioTrack::process (juce::AudioBuffer<float>& mixBus, const Transport::Blo
 
     if (instrumentEnabled.load (std::memory_order_relaxed))
         renderInstrument (list, block, n);
+
+    if (auto* chain = effects.acquire())
+        for (auto& e : chain->effects)
+            e->process (scratch, n, block);
 
     // Fader + pan + mute/solo, smoothed to avoid zipper noise and clicks.
     const auto db = gainDb.load (std::memory_order_relaxed);

@@ -19,6 +19,10 @@ MainComponent::MainComponent()
     samplePool.onLoadFailed = [this] (const juce::String&) { arrangement.repaint(); };
 
     transportBar.onFileMenu = [this] { showFileMenu(); };
+    transportBar.onPlay = [this] { play(); };
+    transportBar.onStop = [this] { stop(); };
+    transportBar.onModeChanged = [this] (bool pattern) { setPatternMode (pattern); };
+    addAndMakeVisible (positionBar);
     transportBar.onAddTrack = [this] { addTrack(); };
     transportBar.onAddMidiTrack = [this] { addMidiTrack(); };
     transportBar.onAudioSettings = [this] { showAudioSettings(); };
@@ -29,11 +33,17 @@ MainComponent::MainComponent()
     arrangement.onTrackSelected = [this] (juce::ValueTree track) { selectTrack (track); };
     arrangement.onClipSelected = [this] (juce::ValueTree clip)
     {
+        if (Project::isMidiClip (clip))
+            lastSelectedMidiClip = clip;
+
         if (Project::isMidiClip (clip) && detail.getTab() == DetailView::Tab::clip)
             detail.showClip (clip);
     };
     arrangement.onClipDoubleClicked = [this] (juce::ValueTree clip)
     {
+        if (Project::isMidiClip (clip))
+            lastSelectedMidiClip = clip;
+
         selectTrack (clip.getParent());
         detail.showClip (clip);
     };
@@ -108,7 +118,9 @@ void MainComponent::audioDeviceIOCallbackWithContext (const float* const*, int,
 void MainComponent::timerCallback()
 {
     engine.collectGarbage();
+    updatePlaybackRange();
     transportBar.refresh();
+    positionBar.refresh();
     detail.refresh();
     updateTitle();
 
@@ -138,6 +150,107 @@ void MainComponent::addMidiTrack()
     const auto track = project.addTrack ({}, Project::TrackKind::midi);
     selectTrack (track);
     detail.setTab (DetailView::Tab::device);
+}
+
+// ---- pattern / song -----------------------------------------------------------------
+
+juce::ValueTree MainComponent::getPatternClip() const
+{
+    const auto isLive = [this] (const juce::ValueTree& clip)
+    {
+        return Project::isMidiClip (clip) && project.indexOfTrack (clip.getParent()) >= 0;
+    };
+
+    if (const auto open = detail.getTab() == DetailView::Tab::clip ? detail.getPianoRoll().getClip()
+                                                                    : juce::ValueTree();
+        isLive (open))
+        return open;
+
+    return isLive (lastSelectedMidiClip) ? lastSelectedMidiClip : juce::ValueTree();
+}
+
+void MainComponent::setPatternMode (bool shouldBeOn)
+{
+    if (shouldBeOn && ! getPatternClip().isValid())
+    {
+        transportBar.setPatternMode (false);
+        showError ("Pattern mode", "Open a MIDI clip first (double-click it, or double-click an empty "
+                                   "spot on a MIDI track to create one). Pattern mode then loops only that clip.");
+        return;
+    }
+
+    patternMode = shouldBeOn;
+    transportBar.setPatternMode (patternMode);
+    updatePlaybackRange();
+
+    auto& transport = engine.getTransport();
+    if (const auto clip = getPatternClip(); patternMode && clip.isValid())
+        transport.setPositionBeats (Project::getClipStart (clip));
+}
+
+void MainComponent::updatePlaybackRange()
+{
+    auto& transport = engine.getTransport();
+    const auto clip = patternMode ? getPatternClip() : juce::ValueTree();
+
+    if (patternMode && ! clip.isValid())
+    {
+        patternMode = false; // the clip was deleted or the project replaced
+        transportBar.setPatternMode (false);
+    }
+
+    if (patternMode)
+    {
+        const auto start = Project::getClipStart (clip);
+        const auto end = Project::getClipEnd (clip);
+        transport.setLoop (start, end);
+        transport.setLoopEnabled (true);
+        engine.setIsolatedTrack ((int) clip.getParent()[ids::engineIndex]);
+        positionBar.setRange (start, end, true);
+
+        // Edits can move the clip away from the playhead: bring it back inside.
+        const auto pos = transport.getPositionBeats();
+        if (transport.isPlaying() && (pos < start - 1.0e-9 || pos >= end))
+            transport.setPositionBeats (start);
+    }
+    else
+    {
+        transport.setLoopEnabled (false);
+        engine.setIsolatedTrack (-1);
+
+        const auto beatsPerBar = (double) juce::jmax (1, transport.getBeatsPerBar());
+        const auto songEnd = std::ceil (ProjectRenderer::getProjectEndBeat (project) / beatsPerBar) * beatsPerBar;
+        positionBar.setRange (0.0, std::max ({ songEnd + beatsPerBar, 4.0 * beatsPerBar,
+                                                 std::ceil (transport.getPositionBeats() / beatsPerBar + 1.0) * beatsPerBar }),
+                              false);
+    }
+}
+
+void MainComponent::play()
+{
+    auto& transport = engine.getTransport();
+
+    if (const auto clip = getPatternClip(); patternMode && clip.isValid())
+    {
+        const auto pos = transport.getPositionBeats();
+        if (pos < Project::getClipStart (clip) || pos >= Project::getClipEnd (clip))
+            transport.setPositionBeats (Project::getClipStart (clip));
+    }
+
+    transport.play();
+}
+
+void MainComponent::stop()
+{
+    // Ableton/FL: first press stops, second press returns to the start (of the pattern).
+    auto& transport = engine.getTransport();
+
+    if (transport.isPlaying())
+        transport.stop();
+    else if (const auto clip = getPatternClip(); patternMode && clip.isValid())
+        transport.setPositionBeats (Project::getClipStart (clip));
+    else
+        transport.setPositionBeats (0.0);
 }
 
 // ---- live notes -------------------------------------------------------------------
@@ -586,7 +699,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
 
     if (key == juce::KeyPress::spaceKey)
     {
-        engine.getTransport().togglePlay();
+        engine.getTransport().isPlaying() ? engine.getTransport().stop() : play();
         return true;
     }
 
@@ -669,6 +782,7 @@ void MainComponent::resized()
 {
     auto area = getLocalBounds();
     transportBar.setBounds (area.removeFromTop (48));
+    positionBar.setBounds (area.removeFromTop (SongPositionBar::preferredHeight));
     detail.setBounds (area.removeFromBottom (juce::jmin (DetailView::preferredHeight, area.getHeight() / 2)));
 
     arrangement.setBounds (area);

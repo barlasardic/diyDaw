@@ -7,6 +7,7 @@
 #include "Engine.h"
 #include "Project.h"
 #include "SamplePool.h"
+#include "SongPositionBar.h"
 #include "TrackStrip.h"
 #include "TransportBar.h"
 
@@ -73,6 +74,13 @@ private:
     void addTrack();
     void addMidiTrack();
 
+    // FL-style pattern mode: loop only the MIDI clip open in the piano roll (or last selected).
+    void setPatternMode (bool shouldBeOn);
+    juce::ValueTree getPatternClip() const;
+    void updatePlaybackRange();   // loop/isolation and the position bar's range, every tick
+    void play();
+    void stop();
+
     /** The track that receives live notes (computer keyboard, MIDI input, piano roll preview):
         the selected track, if it is a MIDI track. */
     void selectTrack (juce::ValueTree track);
@@ -96,6 +104,7 @@ private:
     void valueTreeChildOrderChanged (juce::ValueTree&, int, int) override;
 
     DawLookAndFeel lookAndFeel;
+    juce::TooltipWindow tooltipWindow { this, 700 };
 
     Engine engine;
     SamplePool samplePool;
@@ -110,6 +119,9 @@ private:
     TransportBar transportBar { project };
     ArrangementView arrangement { project };
     DetailView detail { project };
+    SongPositionBar positionBar { project };
+    bool patternMode = false;
+    juce::ValueTree lastSelectedMidiClip;
 
     // Live input routing. liveTrackIndex is the engine slot of the selected MIDI track (-1 = none),
     // read by the MIDI input thread.

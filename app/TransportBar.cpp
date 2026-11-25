@@ -45,13 +45,19 @@ TransportBar::TransportBar (Project& p) : project (p), engine (p.getEngine())
     styleIconButton (playButton, makePlayIcon(), colours::play);
     playButton.shouldUseOnColours (true);
     playButton.setClickingTogglesState (false);
-    playButton.onClick = [this] { engine.getTransport().play(); };
+    playButton.onClick = [this] { if (onPlay) onPlay(); else engine.getTransport().play(); };
     addAndMakeVisible (playButton);
 
     // Ableton behaviour: first press pauses, second press returns to the start.
     styleIconButton (stopButton, makeStopIcon(), colours::text);
     stopButton.onClick = [this]
     {
+        if (onStop)
+        {
+            onStop();
+            return;
+        }
+
         auto& t = engine.getTransport();
         if (t.isPlaying())
             t.stop();
@@ -74,6 +80,23 @@ TransportBar::TransportBar (Project& p) : project (p), engine (p.getEngine())
     bpmCaption.setColour (juce::Label::textColourId, colours::textDim);
     bpmCaption.setFont (juce::FontOptions (11.0f));
     addAndMakeVisible (bpmCaption);
+
+    // FL-style mode switch: PAT plays only the clip open in the piano roll, SONG the arrangement.
+    for (auto* b : { &patternButton, &songButton })
+    {
+        b->setClickingTogglesState (false);
+        b->setMouseClickGrabsKeyboardFocus (false);
+        b->setColour (juce::TextButton::buttonOnColourId, colours::accent);
+        b->setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+        addAndMakeVisible (*b);
+    }
+    patternButton.setTooltip ("Pattern mode: loop only the clip open in the piano roll");
+    songButton.setTooltip ("Song mode: play the arrangement");
+    patternButton.setConnectedEdges (juce::Button::ConnectedOnRight);
+    songButton.setConnectedEdges (juce::Button::ConnectedOnLeft);
+    patternButton.onClick = [this] { if (onModeChanged) onModeChanged (true); };
+    songButton.onClick = [this] { if (onModeChanged) onModeChanged (false); };
+    setPatternMode (false);
 
     metronomeButton.setClickingTogglesState (true);
     metronomeButton.setMouseClickGrabsKeyboardFocus (false);
@@ -106,6 +129,12 @@ TransportBar::TransportBar (Project& p) : project (p), engine (p.getEngine())
     addAndMakeVisible (settingsButton);
 
     refresh();
+}
+
+void TransportBar::setPatternMode (bool isPattern)
+{
+    patternButton.setToggleState (isPattern, juce::dontSendNotification);
+    songButton.setToggleState (! isPattern, juce::dontSendNotification);
 }
 
 juce::String TransportBar::formatPosition (double beats, int beatsPerBar)
@@ -163,8 +192,12 @@ void TransportBar::resized()
     area.removeFromRight (6);
     viewButton.setBounds (area.removeFromRight (100).reduced (0, 2));
 
-    // Centre cluster: play, stop, position
-    auto centre = area.withSizeKeepingCentre (200, area.getHeight());
+    // Centre cluster: pattern/song, play, stop, position
+    auto centre = area.withSizeKeepingCentre (300, area.getHeight());
+    auto modes = centre.removeFromLeft (92).reduced (0, 4);
+    patternButton.setBounds (modes.removeFromLeft (46));
+    songButton.setBounds (modes);
+    centre.removeFromLeft (8);
     playButton.setBounds (centre.removeFromLeft (36));
     stopButton.setBounds (centre.removeFromLeft (36));
     centre.removeFromLeft (8);
