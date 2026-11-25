@@ -60,7 +60,8 @@ if(DAW_BUILD_TESTS)
         tests/SynthTests.cpp
         tests/MidiTests.cpp
         tests/EffectsTests.cpp
-        tests/DeviceChainTests.cpp)
+        tests/DeviceChainTests.cpp
+        tests/LiveNoteTests.cpp)
     target_compile_definitions(DawEngineTests PRIVATE ${DAW_COMMON_DEFINITIONS})
     target_link_libraries(DawEngineTests PRIVATE
         daw_model

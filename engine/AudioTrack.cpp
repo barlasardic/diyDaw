@@ -283,20 +283,8 @@ void AudioTrack::renderInstrument (const ClipList* list, const Transport::Block&
         }
     }
 
-    // Live notes play at the start of the block.
-    {
-        const auto ready = liveFifo.getNumReady();
-        const auto scope = liveFifo.read (ready);
-        for (int i = 0; i < scope.blockSize1; ++i)
-            addEvent (0, liveQueue[(size_t) (scope.startIndex1 + i)].pitch, liveQueue[(size_t) (scope.startIndex1 + i)].velocity,
-                      liveQueue[(size_t) (scope.startIndex1 + i)].isNoteOn);
-        for (int i = 0; i < scope.blockSize2; ++i)
-            addEvent (0, liveQueue[(size_t) (scope.startIndex2 + i)].pitch, liveQueue[(size_t) (scope.startIndex2 + i)].velocity,
-                      liveQueue[(size_t) (scope.startIndex2 + i)].isNoteOn);
-    }
-
-    // Stable insertion sort (no allocation, and the list is short and nearly sorted) by
-    // offset; at equal offsets note-offs go first so a repeated note retriggers.
+    // Sequenced events: stable insertion sort (no allocation, and the list is short and nearly
+    // sorted) by offset; at equal offsets note-offs go first so a repeated note retriggers.
     const auto before = [] (const NoteEvent& a, const NoteEvent& b)
     {
         if (a.sampleOffset != b.sampleOffset)
@@ -311,6 +299,31 @@ void AudioTrack::renderInstrument (const ClipList* list, const Transport::Block&
         for (; j > 0 && before (e, events[(size_t) (j - 1)]); --j)
             events[(size_t) j] = events[(size_t) (j - 1)];
         events[(size_t) j] = e;
+    }
+
+    // Live notes play at the start of the block, after the sequencer's offset-0 events and in
+    // *arrival order*: a quick click sends note-on then note-off within one block, and
+    // reordering those (offs first) would leave the note hanging.
+    {
+        auto insertAt = 0;
+        while (insertAt < numEvents && events[(size_t) insertAt].sampleOffset == 0)
+            ++insertAt;
+
+        const auto scope = liveFifo.read (liveFifo.getNumReady());
+        const auto numLive = juce::jmin (scope.blockSize1 + scope.blockSize2, maxEventsPerBlock - numEvents);
+
+        // Make room after the offset-0 group, then copy the live events in order.
+        for (int i = numEvents - 1; i >= insertAt; --i)
+            events[(size_t) (i + numLive)] = events[(size_t) i];
+
+        for (int i = 0; i < numLive; ++i)
+        {
+            const auto index = i < scope.blockSize1 ? scope.startIndex1 + i : scope.startIndex2 + (i - scope.blockSize1);
+            const auto& live = liveQueue[(size_t) index];
+            events[(size_t) (insertAt + i)] = { 0, live.pitch, live.velocity, live.isNoteOn };
+        }
+
+        numEvents += numLive;
     }
 
     synth.process (scratch, n, events.data(), numEvents);
