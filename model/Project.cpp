@@ -192,6 +192,12 @@ void Project::newDocument (int numTracks)
     documentFile = juce::File();
 }
 
+void Project::copyFrom (const Project& other)
+{
+    replaceContents (other.state.createCopy());
+    documentFile = juce::File();
+}
+
 juce::Result Project::saveTo (const juce::File& file)
 {
     const auto folder = file.getParentDirectory();

@@ -2,6 +2,7 @@
 
 #include "ArrangementView.h"
 #include "DawLookAndFeel.h"
+#include "ExportDialog.h"
 #include "Engine.h"
 #include "Project.h"
 #include "SamplePool.h"
@@ -46,6 +47,7 @@ public:
     void openProject (const juce::File& file);
     void saveProject (std::function<void (bool saved)> then = {});
     void saveProjectAs (std::function<void (bool saved)> then = {});
+    void showExportDialog();
 
     /** Asks to save unsaved changes, then calls quit if the user didn't cancel. */
     void requestQuit (std::function<void()> quit);
@@ -88,6 +90,8 @@ private:
 
     juce::ValueTree projectState { project.getState() };
     std::unique_ptr<juce::FileChooser> fileChooser;
+    juce::Component::SafePointer<juce::DialogWindow> exportWindow;
+    std::unique_ptr<ExportJob> exportJob;
 
     TransportBar transportBar { project };
     ArrangementView arrangement { project };

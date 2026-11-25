@@ -57,6 +57,9 @@ MainComponent::MainComponent()
 MainComponent::~MainComponent()
 {
     stopTimer();
+    exportJob.reset(); // stops the export thread before the project goes away
+    if (exportWindow != nullptr)
+        delete exportWindow.getComponent();
     projectState.removeListener (this);
     deviceManager.removeAudioCallback (this);
     deviceManager.closeAudioDevice();
@@ -320,8 +323,66 @@ void MainComponent::showFileMenu()
     menu.addSeparator();
     menu.addItem ("Save\t" + cmd + "S", [this] { saveProject(); });
     menu.addItem ("Save As...\t" + cmd + "Shift+S", [this] { saveProjectAs(); });
+    menu.addSeparator();
+    menu.addItem ("Export Audio...\t" + cmd + "Shift+R", exportJob == nullptr, false, [this] { showExportDialog(); });
 
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (transportBar.getFileButton()));
+}
+
+void MainComponent::showExportDialog()
+{
+    if (exportJob != nullptr)
+        return; // one export at a time
+
+    if (exportWindow != nullptr)
+    {
+        exportWindow->toFront (true);
+        return;
+    }
+
+    auto* device = deviceManager.getCurrentAudioDevice();
+    auto dialog = std::make_unique<ExportDialog> (project, device != nullptr ? device->getCurrentSampleRate() : 44100.0);
+
+    dialog->onCancel = [this] { if (exportWindow != nullptr) exportWindow->exitModalState (0); };
+    dialog->onExport = [this] (const ExportSettings& settings, const juce::File& file)
+    {
+        if (exportWindow != nullptr)
+            exportWindow->exitModalState (0);
+
+        // The renderer copies the project now, so editing or playing during the export is safe.
+        exportJob = std::make_unique<ExportJob> (project, settings, file);
+        exportJob->onFinished = [this, file] (juce::Result result)
+        {
+            // Delete the job after its window callback has returned.
+            juce::MessageManager::callAsync ([safeThis = juce::Component::SafePointer<MainComponent> (this)]
+            {
+                if (safeThis != nullptr)
+                    safeThis->exportJob.reset();
+            });
+
+            if (result.failed())
+                showError ("Export failed", result.getErrorMessage());
+            else
+                juce::AlertWindow::showAsync (juce::MessageBoxOptions()
+                                                  .withIconType (juce::MessageBoxIconType::InfoIcon)
+                                                  .withTitle ("Export finished")
+                                                  .withMessage ("Saved " + file.getFullPathName())
+                                                  .withButton ("OK", 0)
+                                                  .withAssociatedComponent (this),
+                                              nullptr);
+        };
+        exportJob->launchThread();
+    };
+
+    juce::DialogWindow::LaunchOptions options;
+    options.content.setOwned (dialog.release());
+    options.dialogTitle = "Export Audio";
+    options.dialogBackgroundColour = colours::panel;
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar = true;
+    options.resizable = false;
+    options.componentToCentreAround = this;
+    exportWindow = options.launchAsync();
 }
 
 juce::Result MainComponent::openProjectSynchronously (const juce::File& file)
@@ -416,6 +477,12 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (mods.isCommandDown() && key.getKeyCode() == 'S')
     {
         mods.isShiftDown() ? saveProjectAs() : saveProject();
+        return true;
+    }
+
+    if (mods.isCommandDown() && mods.isShiftDown() && key.getKeyCode() == 'R')
+    {
+        showExportDialog();
         return true;
     }
 

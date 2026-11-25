@@ -94,6 +94,10 @@ public:
         Tracks beyond Engine::maxTracks are dropped (the Result says so, but is still ok). */
     juce::Result loadFrom (const juce::File& file);
 
+    /** Replaces this document with a copy of another project's current state (no file,
+        no undo history). Used for offline rendering. */
+    void copyFrom (const Project& other);
+
     /** The file the document was last saved to / loaded from (may not exist). */
     juce::File getFile() const { return documentFile; }
     bool hasUnsavedChanges() const noexcept { return unsavedChanges; }

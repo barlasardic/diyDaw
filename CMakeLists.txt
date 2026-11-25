@@ -21,6 +21,7 @@ target_sources(daw_engine INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/Engine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/Metronome.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/SampleData.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/Synth.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/Transport.cpp)
 target_include_directories(daw_engine INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/engine)
 
@@ -28,6 +29,7 @@ target_include_directories(daw_engine INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/engi
 add_library(daw_model INTERFACE)
 target_sources(daw_model INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/model/Project.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/model/ProjectRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/model/SamplePool.cpp)
 target_include_directories(daw_model INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/model)
 target_link_libraries(daw_model INTERFACE daw_engine)
@@ -51,7 +53,9 @@ if(DAW_BUILD_TESTS)
         tests/MetronomeTests.cpp
         tests/TrackTests.cpp
         tests/ProjectTests.cpp
-        tests/PersistenceTests.cpp)
+        tests/PersistenceTests.cpp
+        tests/ExportTests.cpp
+        tests/SynthTests.cpp)
     target_compile_definitions(DawEngineTests PRIVATE ${DAW_COMMON_DEFINITIONS})
     target_link_libraries(DawEngineTests PRIVATE
         daw_model
@@ -73,6 +77,7 @@ if(DAW_BUILD_APP)
     target_sources(DiyDaw PRIVATE
         app/Main.cpp
         app/MainComponent.cpp
+        app/ExportDialog.cpp
         app/TransportBar.cpp
         app/TrackStrip.cpp
         app/LevelMeter.cpp

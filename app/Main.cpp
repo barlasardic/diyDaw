@@ -20,6 +20,34 @@ public:
         // offscreen and exits (for visual checks). Audio file i is placed on track i, staggered
         // by one bar; a project file is opened instead (its samples decoded synchronously).
         auto args = juce::StringArray::fromTokens (commandLine, true);
+        // `--dialog export` snapshots the Export Audio panel instead of the main window.
+        const auto showExportDialog = args.contains ("--dialog");
+        if (const auto d = args.indexOf ("--dialog"); d >= 0)
+            args.removeRange (d, 2);
+
+        // `diyDaw --export out.wav project.diydaw` bounces the whole project (24 bit, 44.1 kHz).
+        if (const auto i = args.indexOf ("--export"); i >= 0 && i + 2 < args.size())
+        {
+            const auto cwd = juce::File::getCurrentWorkingDirectory();
+            MainComponent ui;
+            auto result = ui.openProjectSynchronously (cwd.getChildFile (args[i + 2].unquoted()));
+
+            if (result.wasOk())
+            {
+                ExportSettings settings;
+                settings.endBeat = ProjectRenderer::getProjectEndBeat (ui.getProject());
+                ProjectRenderer renderer (ui.getProject(), settings);
+                result = renderer.renderToFile (cwd.getChildFile (args[i + 1].unquoted()));
+            }
+
+            if (result.failed())
+                std::cerr << result.getErrorMessage() << std::endl;
+
+            setApplicationReturnValue (result.wasOk() ? 0 : 1);
+            quit();
+            return;
+        }
+
         if (const auto i = args.indexOf ("--snapshot"); i >= 0 && i + 1 < args.size())
         {
             const auto size = juce::StringArray::fromTokens (args[i + 2], "x", {});
@@ -41,7 +69,12 @@ public:
             }
             ui.loadFilesSynchronously (audioFiles, 4.0);
 
-            const auto image = ui.createComponentSnapshot (ui.getLocalBounds());
+            std::unique_ptr<juce::Component> dialog;
+            if (showExportDialog)
+                dialog = std::make_unique<ExportDialog> (ui.getProject(), 44100.0);
+
+            auto& target = dialog != nullptr ? *dialog : static_cast<juce::Component&> (ui);
+            const auto image = target.createComponentSnapshot (target.getLocalBounds());
             juce::File file (juce::File::getCurrentWorkingDirectory().getChildFile (args[i + 1].unquoted()));
             file.deleteFile();
             juce::FileOutputStream stream (file);
