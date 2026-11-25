@@ -38,6 +38,9 @@ void ProjectRenderer::rewind()
     transport.stop();
     engine.prepare (settings.sampleRate, blockSize);
 
+    // Seek first so automation is evaluated at the start position during the warm-up.
+    transport.setPositionBeats (settings.startBeat);
+
     // Faders smooth in from silence after prepare(); run the stopped engine for longer than
     // the 20 ms smoothing time so the export starts at full level, not with a fade-in.
     juce::AudioBuffer<float> warmUp (2, blockSize);

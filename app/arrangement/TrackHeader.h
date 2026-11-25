@@ -5,6 +5,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <functional>
+
 namespace daw
 {
 
@@ -23,6 +25,9 @@ public:
     /** Called ~30 Hz by the owner: meter levels, and resync controls/name from the model. */
     void refresh();
 
+    void setAutomationShown (bool shown);
+    std::function<void (bool)> onAutomationToggled;
+
     juce::ValueTree getTrack() const { return track; }
 
     static constexpr int preferredWidth = 180;
@@ -37,6 +42,7 @@ private:
     juce::Label nameLabel;
     juce::TextButton activatorButton;
     juce::TextButton soloButton;
+    juce::TextButton automationButton { "A" };
     juce::Slider volumeSlider;
     LevelMeter meter;
 

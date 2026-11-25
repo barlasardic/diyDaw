@@ -1,4 +1,5 @@
 #include "ArrangementView.h"
+#include "AutomationLane.h"
 #include "DawLookAndFeel.h"
 
 #include <algorithm>
@@ -35,35 +36,111 @@ public:
 
     int timelineWidth() const { return juce::jmax (0, getWidth() - TrackHeader::preferredWidth); }
 
+    // All vertical geometry comes from this layout, including automation sub-lanes.
+    struct RowLayout
+    {
+        int top = 0, automationTop = 0, bottom = 0;
+        bool expanded = false;
+    };
+
+    int tracksHeight() const { return layout.empty() ? 0 : layout.back().bottom; }
+
+    int rowAtY (float y) const
+    {
+        for (size_t i = 0; i < layout.size(); ++i)
+            if (y >= (float) layout[i].top && y < (float) layout[i].bottom)
+                return (int) i;
+        return -1;
+    }
+
+    bool isAutomationY (float y) const
+    {
+        const auto row = rowAtY (y);
+        return row >= 0 && layout[(size_t) row].expanded && y >= (float) layout[(size_t) row].automationTop;
+    }
+
     void syncHeaders()
     {
-        std::vector<std::unique_ptr<TrackHeader>> updated;
+        std::vector<Row> updated;
         for (int i = 0; i < owner.project.getNumTracks(); ++i)
         {
             const auto track = owner.project.getTrack (i);
-            auto existing = std::find_if (headers.begin(), headers.end(), [&track] (const auto& header)
+            auto existing = std::find_if (rows.begin(), rows.end(), [&track] (const auto& row)
             {
-                return header != nullptr && header->getTrack() == track;
+                return row.header != nullptr && row.header->getTrack() == track;
             });
 
-            if (existing != headers.end())
+            if (existing != rows.end())
                 updated.push_back (std::move (*existing));
             else
             {
-                auto header = std::make_unique<TrackHeader> (owner.project, track);
-                addAndMakeVisible (*header);
-                updated.push_back (std::move (header));
+                Row row;
+                row.header = std::make_unique<TrackHeader> (owner.project, track);
+                row.automation = std::make_unique<AutomationLaneView> (owner.project, track, owner.geometry, owner.playheadBeat);
+                row.header->onAutomationToggled = [this, track] (bool expanded)
+                {
+                    for (auto& item : rows)
+                        if (item.header->getTrack() == track)
+                        {
+                            item.expanded = expanded;
+                            if (! expanded)
+                                item.automation->clearSelection();
+                        }
+                    resized();
+                    owner.resized();
+                };
+                const auto* automation = row.automation.get();
+                row.automation->onSelect = [this, track, automation]
+                {
+                    cancelDrag();
+                    selected = {};
+                    for (auto& item : rows)
+                        if (item.automation.get() != automation)
+                            item.automation->clearSelection();
+                    if (isShowing())
+                        grabKeyboardFocus();
+                    if (owner.onTrackSelected)
+                        owner.onTrackSelected (track);
+                    repaint();
+                };
+                row.automation->onScroll = [this] (const auto& event, const auto& wheel)
+                {
+                    owner.scrollOrZoom (event, wheel, true);
+                };
+                addAndMakeVisible (*row.header);
+                addChildComponent (*row.automation);
+                updated.push_back (std::move (row));
             }
         }
 
-        headers = std::move (updated);
+        rows = std::move (updated);
         resized();
     }
 
     void refreshHeaders()
     {
-        for (auto& header : headers)
-            header->refresh();
+        for (auto& row : rows)
+            row.header->refresh();
+    }
+
+    void refreshAutomation()
+    {
+        for (auto& row : rows)
+            row.automation->refresh();
+    }
+
+    void showAutomationForTracksWithAutomation()
+    {
+        for (auto& row : rows)
+            for (const auto& child : row.header->getTrack())
+                if (Project::isAutomationLane (child))
+                {
+                    row.expanded = true;
+                    break;
+                }
+        refreshAutomation();
+        resized();
+        owner.resized();
     }
 
     void validateSelection()
@@ -77,6 +154,8 @@ public:
     void select (juce::ValueTree clip)
     {
         selected = clip;
+        for (auto& row : rows)
+            row.automation->clearSelection();
         repaint();
     }
 
@@ -93,11 +172,18 @@ public:
 
     void resized() override
     {
+        layout.clear();
         int y = 0;
-        for (auto& header : headers)
+        for (auto& row : rows)
         {
-            header->setBounds (0, y, TrackHeader::preferredWidth, laneHeight);
-            y += laneHeight;
+            const auto automationTop = y + laneHeight;
+            const auto bottom = automationTop + (row.expanded ? AutomationLaneView::preferredHeight : 0);
+            layout.push_back ({ y, automationTop, bottom, row.expanded });
+            row.header->setBounds (0, y, TrackHeader::preferredWidth, laneHeight);
+            row.header->setAutomationShown (row.expanded);
+            row.automation->setBounds (0, automationTop, getWidth(), AutomationLaneView::preferredHeight);
+            row.automation->setVisible (row.expanded);
+            y = bottom;
         }
     }
 
@@ -109,13 +195,13 @@ public:
         g.setOrigin (TrackHeader::preferredWidth, 0);
 
         const auto trackCount = owner.project.getNumTracks();
-        const auto tracksHeight = trackCount * laneHeight;
+        const auto contentHeight = tracksHeight();
         const auto width = (float) timelineWidth();
         const auto& geometry = owner.geometry;
         const auto clipArea = g.getClipBounds();
 
         g.setColour (colours::panel);
-        g.fillRect (0, 0, timelineWidth(), tracksHeight);
+        g.fillRect (0, 0, timelineWidth(), contentHeight);
 
         // Restrict bar/grid traversal even when repainting a narrow playhead strip.
         const auto firstBeat = geometry.xToBeat ((float) clipArea.getX());
@@ -127,7 +213,7 @@ public:
             {
                 g.setColour (colours::panel.brighter (0.035f));
                 g.fillRect (geometry.beatToX (beat), 0.0f,
-                            (float) (bar * geometry.pixelsPerBeat), (float) tracksHeight);
+                            (float) (bar * geometry.pixelsPerBeat), (float) contentHeight);
             }
         }
 
@@ -136,13 +222,14 @@ public:
         {
             const auto isBar = std::abs (beat / bar - std::round (beat / bar)) < 1.0e-7;
             g.setColour (isBar ? colours::textDim.withAlpha (0.32f) : colours::outline.withAlpha (0.55f));
-            g.drawVerticalLine ((int) std::floor (geometry.beatToX (beat)), 0.0f, (float) tracksHeight);
+            g.drawVerticalLine ((int) std::floor (geometry.beatToX (beat)), 0.0f, (float) contentHeight);
         }
 
-        const auto firstRow = juce::jlimit (0, trackCount, clipArea.getY() / laneHeight);
-        const auto lastRow = juce::jlimit (0, trackCount, clipArea.getBottom() / laneHeight + 1);
-        for (int row = firstRow; row < lastRow; ++row)
+        for (int row = 0; row < trackCount; ++row)
         {
+            const auto& rowBounds = layout[(size_t) row];
+            if (rowBounds.automationTop <= clipArea.getY() || rowBounds.top >= clipArea.getBottom())
+                continue;
             const auto track = owner.project.getTrack (row);
             for (const auto& clip : track)
             {
@@ -160,7 +247,7 @@ public:
                     g.endTransparencyLayer();
             }
             g.setColour (colours::outline);
-            g.drawHorizontalLine ((row + 1) * laneHeight - 1, 0.0f, width);
+            g.drawHorizontalLine (layout[(size_t) row].automationTop - 1, 0.0f, width);
         }
 
         if (drag.hasMoved && drag.track.isValid())
@@ -179,7 +266,7 @@ public:
 
         g.setColour (colours::textDim);
         g.setFont (juce::FontOptions (12.0f));
-        g.drawText ("Drop audio files here to create a track", 12, tracksHeight + 16,
+        g.drawText ("Drop audio files here to create a track", 12, contentHeight + 16,
                     juce::jmax (0, timelineWidth() - 24), 24, juce::Justification::centredLeft, true);
 
         const auto playheadX = geometry.beatToX (owner.playheadBeat);
@@ -203,7 +290,7 @@ public:
         const auto clip = clipAt (point);
         select (clip);
 
-        if (const auto row = (int) point.y / laneHeight; row < owner.project.getNumTracks() && owner.onTrackSelected)
+        if (const auto row = rowAtY (point.y); row >= 0 && owner.onTrackSelected)
             owner.onTrackSelected (owner.project.getTrack (row));
 
         if (clip.isValid() && owner.onClipSelected)
@@ -282,8 +369,8 @@ public:
 
         cancelDrag();
         const auto point = timelinePoint (event);
-        const auto row = (int) point.y / laneHeight;
-        if (point.y < 0.0f || row >= owner.project.getNumTracks())
+        const auto row = rowAtY (point.y);
+        if (row < 0 || isAutomationY (point.y))
             return;
 
         auto clip = clipAt (point);
@@ -328,9 +415,23 @@ public:
             cancelDrag();
             return true;
         }
+        if (key.getKeyCode() == juce::KeyPress::escapeKey)
+        {
+            bool cancelled = false;
+            for (auto& row : rows)
+                cancelled = row.automation->cancelGesture() || cancelled;
+            if (cancelled)
+                return true;
+        }
         validateSelection();
         if (! selected.isValid())
+        {
+            if (key.getKeyCode() == juce::KeyPress::deleteKey || key.getKeyCode() == juce::KeyPress::backspaceKey)
+                for (auto& row : rows)
+                    if (row.automation->deleteSelectedPoint())
+                        return true;
             return false;
+        }
 
         const auto code = key.getKeyCode();
         auto& project = owner.project;
@@ -404,7 +505,10 @@ private:
     {
         if (point.x < 0.0f || point.x >= (float) timelineWidth() || point.y < 0.0f)
             return {};
-        const auto track = owner.project.getTrack ((int) point.y / laneHeight);
+        const auto row = rowAtY (point.y);
+        if (row < 0 || isAutomationY (point.y))
+            return {};
+        const auto track = owner.project.getTrack (row);
         const auto beat = owner.geometry.xToBeat (point.x);
         for (const auto& clip : track)
             if (clip.hasType (ids::CLIP) && beat >= Project::getClipStart (clip) && beat < Project::getClipEnd (clip))
@@ -435,7 +539,7 @@ private:
 
     juce::Rectangle<float> clipBounds (int row, double start, double length) const
     {
-        return { owner.geometry.beatToX (start), (float) (row * laneHeight + 2),
+        return { owner.geometry.beatToX (start), (float) (layout[(size_t) row].top + 2),
                  (float) (length * owner.geometry.pixelsPerBeat), (float) (laneHeight - 4) };
     }
 
@@ -487,8 +591,10 @@ private:
             case DragMode::move:
             {
                 drag.start = juce::jmax (0.0, snap (drag.originalStart + delta));
-                const auto row = juce::jlimit (0, project.getNumTracks() - 1,
-                                               (int) std::floor (event.position.y / (float) laneHeight));
+                // An automation sub-lane maps to its parent track for clip moves.
+                auto row = rowAtY (event.position.y);
+                if (row < 0)
+                    row = event.position.y < 0.0f ? 0 : project.getNumTracks() - 1;
                 // Clips only move between tracks of the same kind (audio <-> audio, MIDI <-> MIDI).
                 if (const auto target = project.getTrack (row); Project::isMidiTrack (target) == Project::isMidiClip (drag.clip))
                     drag.track = target;
@@ -552,7 +658,14 @@ private:
     }
 
     ArrangementView& owner;
-    std::vector<std::unique_ptr<TrackHeader>> headers;
+    struct Row
+    {
+        std::unique_ptr<TrackHeader> header;
+        std::unique_ptr<AutomationLaneView> automation;
+        bool expanded = false;
+    };
+    std::vector<Row> rows;
+    std::vector<RowLayout> layout;
     juce::ValueTree selected;
     Preview drag;
 };
@@ -596,6 +709,11 @@ ArrangementView::~ArrangementView()
 {
     state.removeListener (this);
     viewport.setViewedComponent (nullptr, false);
+}
+
+void ArrangementView::showAutomationForTracksWithAutomation()
+{
+    lanes->showAutomationForTracksWithAutomation();
 }
 
 void ArrangementView::refresh()
@@ -644,7 +762,7 @@ void ArrangementView::resized()
 {
     viewport.setBounds (getLocalBounds().withTrimmedTop (TimeRuler::preferredHeight));
     const auto height = juce::jmax (viewport.getMaximumVisibleHeight(),
-                                   (project.getNumTracks() + 1) * laneHeight);
+                                   lanes->tracksHeight() + laneHeight);
     // Showing/hiding the scrollbar changes the available width.
     lanes->setSize (viewport.getWidth(), height);
     lanes->setSize (viewport.getMaximumVisibleWidth(), height);
@@ -677,7 +795,7 @@ void ArrangementView::scrollOrZoom (const juce::MouseEvent& event,
     }
     const auto vertical = overLanes && ! event.mods.isShiftDown()
         && std::abs (wheel.deltaY) > std::abs (wheel.deltaX)
-        && project.getNumTracks() * laneHeight > viewport.getMaximumVisibleHeight();
+        && lanes->tracksHeight() > viewport.getMaximumVisibleHeight();
     if (vertical)
     {
         viewport.setViewPosition (0, viewport.getViewPositionY() - juce::roundToInt (wheel.deltaY * 180.0f));
@@ -712,8 +830,9 @@ void ArrangementView::filesDropped (const juce::StringArray& files, int x, int y
     if (batch->files.isEmpty())
         return;
 
-    const auto row = point.y / laneHeight;
-    if (row >= project.getNumTracks() || Project::isMidiTrack (project.getTrack (row)))
+    // File drops on an automation sub-lane use its parent track too.
+    const auto row = lanes->rowAtY ((float) point.y);
+    if (row < 0 || Project::isMidiTrack (project.getTrack (row)))
     {
         const auto oldCount = project.getNumTracks();
         if (onAddTrackRequested)
@@ -775,6 +894,7 @@ void ArrangementView::modelChanged (bool tracksChanged)
         lanes->syncHeaders();
         resized();
     }
+    lanes->refreshAutomation();
     lanes->repaint();
 }
 

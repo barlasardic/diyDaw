@@ -25,6 +25,30 @@ inline void bindSliderToProject (juce::Slider& slider, Project& project, const j
     };
 }
 
+/** Shows whether a parameter is automated: the slider's accent turns red and it gets a tooltip.
+    While automated the engine follows the envelope, so the caller shows the engine's value. */
+inline void showAutomationState (juce::Slider& slider, bool automated)
+{
+    const auto wasAutomated = slider.isColourSpecified (juce::Slider::rotarySliderFillColourId);
+    if (automated == wasAutomated)
+        return;
+
+    if (automated)
+    {
+        slider.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (0xffff5f57));
+        slider.setColour (juce::Slider::trackColourId, juce::Colour (0xffff5f57));
+        slider.setTooltip ("Automated - edit the envelope in the arrangement (A button on the track)");
+    }
+    else
+    {
+        slider.removeColour (juce::Slider::rotarySliderFillColourId);
+        slider.removeColour (juce::Slider::trackColourId);
+        slider.setTooltip ({});
+    }
+
+    slider.repaint();
+}
+
 /** Same for a toggle button: every click is its own undo step. */
 inline void bindToggleToProject (juce::Button& button, Project& project, const juce::String& actionName,
                                  std::function<void (bool)> apply)

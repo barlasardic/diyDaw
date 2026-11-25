@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AudioEffect.h"
+#include "Automation.h"
 #include "Clip.h"
 #include "PeakMeter.h"
 #include "RealtimeSwap.h"
@@ -64,8 +65,13 @@ public:
         already be prepared at the engine's current sample rate. */
     void setEffects (std::unique_ptr<EffectChain> chain) { effects.publish (std::move (chain)); }
 
-    /** Free clip lists, samples and effect chains the audio thread has finished with. */
-    void collectGarbage() { clips.collectGarbage(); effects.collectGarbage(); }
+    /** Replace the track's automation. Every block, each lane's value at the playhead (also
+        while stopped) is written into its parameter before rendering, overriding the value the
+        model set; when a lane goes away the model must push the parameter's own value again. */
+    void setAutomation (std::unique_ptr<AutomationList> list) { automation.publish (std::move (list)); }
+
+    /** Free clip lists, samples, effect chains and automation the audio thread is done with. */
+    void collectGarbage() { clips.collectGarbage(); effects.collectGarbage(); automation.collectGarbage(); }
 
     PeakMeter& getMeter() noexcept { return meter; }
 
@@ -89,6 +95,7 @@ public:
 private:
     void renderClip (const Clip& clip, const Transport::Block& block, int numSamples) noexcept;
     void renderInstrument (const ClipList* list, const Transport::Block& block, int numSamples) noexcept;
+    void applyAutomation (const Transport::Block& block) noexcept;
     void collectMidiClip (const Clip& clip, const Transport::Block& block, int numSamples) noexcept;
     void addEvent (int offset, int pitch, float velocity, bool isNoteOn) noexcept;
 
@@ -99,6 +106,7 @@ private:
 
     RealtimeSwap<ClipList> clips;
     RealtimeSwap<EffectChain> effects;
+    RealtimeSwap<AutomationList> automation;
     PeakMeter meter;
 
     std::atomic<bool> instrumentEnabled { false };

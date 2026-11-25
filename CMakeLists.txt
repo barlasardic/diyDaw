@@ -19,6 +19,7 @@ add_library(daw_engine INTERFACE)
 target_sources(daw_engine INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/AudioEffect.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/AudioTrack.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/Automation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/Effects.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/Engine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/Metronome.cpp
@@ -61,7 +62,8 @@ if(DAW_BUILD_TESTS)
         tests/MidiTests.cpp
         tests/EffectsTests.cpp
         tests/DeviceChainTests.cpp
-        tests/LiveNoteTests.cpp)
+        tests/LiveNoteTests.cpp
+        tests/AutomationTests.cpp)
     target_compile_definitions(DawEngineTests PRIVATE ${DAW_COMMON_DEFINITIONS})
     target_link_libraries(DawEngineTests PRIVATE
         daw_model
@@ -90,6 +92,7 @@ if(DAW_BUILD_APP)
         app/LevelMeter.cpp
         app/DawLookAndFeel.cpp
         app/arrangement/ArrangementView.cpp
+        app/arrangement/AutomationLane.cpp
         app/arrangement/ClipPainter.cpp
         app/arrangement/TimeRuler.cpp
         app/arrangement/TrackHeader.cpp

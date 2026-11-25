@@ -26,6 +26,9 @@ class Engine
 public:
     static constexpr int maxTracks = 16;
 
+    /** Longest block rendered in one go; automation values update at this granularity. */
+    static constexpr int automationBlockSize = 256;
+
     Engine();
 
     Transport& getTransport() noexcept { return transport; }

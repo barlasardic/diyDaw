@@ -32,6 +32,9 @@ public:
     /** Called ~30 Hz by the owner: playhead, follow mode, header meters. */
     void refresh();
 
+    /** Snapshot helper: expand tracks containing automation lanes (UI state only). */
+    void showAutomationForTracksWithAutomation();
+
     void paint (juce::Graphics&) override;
     void resized() override;
 

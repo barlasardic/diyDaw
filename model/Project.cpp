@@ -134,6 +134,12 @@ namespace
             tree.setProperty (ids::length, juce::jmax (Project::minNoteLengthBeats, (double) tree[ids::length]), nullptr);
             tree.setProperty (ids::velocity, juce::jlimit (0.0, 1.0, (double) tree[ids::velocity]), nullptr);
         }
+        else if (tree.hasType (ids::POINT))
+        {
+            setDouble (tree, ids::beat, 0.0);
+            setDouble (tree, ids::value, 0.0);
+            tree.setProperty (ids::beat, juce::jmax (0.0, (double) tree[ids::beat]), nullptr);
+        }
         else if (tree.hasType (ids::DEVICE))
         {
             for (const auto& info : Project::getDeviceParamInfos (tree))
@@ -239,7 +245,8 @@ juce::String Project::replaceContents (const juce::ValueTree& newState)
             const auto isSynth = child.hasType (ids::DEVICE) && getDeviceType (child) == "synth";
             const auto keep = (child.hasType (ids::CLIP) && isMidiClip (child) == midi)
                            || (midi && isSynth && ! haveDevice)
-                           || (isEffect (child) && getEffectTypes().contains (getDeviceType (child)));
+                           || (isEffect (child) && getEffectTypes().contains (getDeviceType (child)))
+                           || (isAutomationLane (child) && getAutomationTargetId (child).isNotEmpty());
             haveDevice = haveDevice || (keep && isSynth);
 
             if (! keep)
@@ -251,6 +258,11 @@ juce::String Project::replaceContents (const juce::ValueTree& newState)
             else if (isMidiClip (child))
                 for (int n = child.getNumChildren(); --n >= 0;)
                     if (! child.getChild (n).hasType (ids::NOTE))
+                        juce::ValueTree (child).removeChild (n, nullptr);
+
+            if (isAutomationLane (child))
+                for (int n = child.getNumChildren(); --n >= 0;)
+                    if (! child.getChild (n).hasType (ids::POINT))
                         juce::ValueTree (child).removeChild (n, nullptr);
         }
 
@@ -266,6 +278,37 @@ juce::String Project::replaceContents (const juce::ValueTree& newState)
             }
 
         state.appendChild (track, nullptr);
+    }
+
+    // Every DEVICE needs a unique uid (automation refers to it); repair missing / duplicate ones.
+    {
+        juce::Array<int> used;
+        juce::Array<juce::ValueTree> needUid;
+
+        for (const auto& track : state)
+            for (const auto& child : track)
+                if (child.hasType (ids::DEVICE))
+                {
+                    const auto id = (int) child.getProperty (ids::uid, 0);
+                    if (id > 0 && ! used.contains (id))
+                        used.add (id);
+                    else
+                        needUid.add (child);
+                }
+
+        auto next = 1;
+        for (auto device : needUid)
+        {
+            while (used.contains (next))
+                ++next;
+            device.setProperty (ids::uid, next, nullptr);
+            used.add (next);
+        }
+
+        // Automation targets refer to uids: rebuild the engine snapshots with the final ones.
+        if (! needUid.isEmpty())
+            for (const auto& track : state)
+                syncAutomation (track);
     }
 
     undoManager.clearUndoHistory();
@@ -363,7 +406,9 @@ juce::Result Project::loadFrom (const juce::File& file)
     documentFile = file;
 
     if (warning.isNotEmpty())
+    {
         DBG (warning);
+    }
 
     // Clips are skipped by the engine until their sample arrives; SamplePool::onSampleAdded
     // then triggers syncAllTracks().
@@ -402,6 +447,9 @@ juce::ValueTree Project::addTrack (const juce::String& name, TrackKind trackKind
         return {};
 
     auto track = makeTrack (getNumTracks() + 1, trackKind);
+    if (auto device = getDevice (track); device.isValid())
+        device.setProperty (ids::uid, nextDeviceUid(), nullptr);
+
     if (name.isNotEmpty())
         track.setProperty (ids::name, name, nullptr);
 
@@ -519,6 +567,7 @@ juce::ValueTree Project::addEffect (juce::ValueTree track, const juce::String& e
 
     juce::ValueTree device (ids::DEVICE);
     device.setProperty (ids::type, effectType, nullptr);
+    device.setProperty (ids::uid, nextDeviceUid(), nullptr);
     device.setProperty (ids::enabled, true, nullptr);
 
     for (const auto& info : getEffectParamInfos (effectType))
@@ -542,8 +591,16 @@ juce::ValueTree Project::addEffect (juce::ValueTree track, const juce::String& e
 void Project::removeEffect (juce::ValueTree device)
 {
     auto track = device.getParent();
-    if (isEffect (device) && track.isValid())
-        track.removeChild (device, &undoManager);
+    if (! isEffect (device) || ! track.isValid())
+        return;
+
+    // Its automation goes with it (and comes back with an undo).
+    const auto prefix = device[ids::uid].toString() + ":";
+    for (int i = track.getNumChildren(); --i >= 0;)
+        if (const auto child = track.getChild (i); isAutomationLane (child) && getAutomationTargetId (child).startsWith (prefix))
+            track.removeChild (i, &undoManager);
+
+    track.removeChild (device, &undoManager);
 }
 
 void Project::moveEffect (juce::ValueTree device, int newIndex)
@@ -605,6 +662,7 @@ void Project::syncEffects (const juce::ValueTree& track)
     }
 
     getEngineTrack (track).setEffects (std::move (chain));
+    syncAutomation (track);
 
     // Forget instances whose DEVICE is no longer in the project (an undo that brings one back
     // gets a fresh instance). The engine keeps its own references until it's done with them.
@@ -901,6 +959,293 @@ void Project::clearRegion (juce::ValueTree track, double start, double end, cons
     }
 }
 
+// ---- automation -------------------------------------------------------------------
+
+int Project::nextDeviceUid() const
+{
+    auto highest = 0;
+    for (const auto& track : state)
+        for (const auto& child : track)
+            if (child.hasType (ids::DEVICE))
+                highest = juce::jmax (highest, (int) child.getProperty (ids::uid, 0));
+
+    return highest + 1;
+}
+
+juce::ValueTree Project::findDeviceByUid (const juce::ValueTree& track, int deviceUid)
+{
+    for (const auto& child : track)
+        if (child.hasType (ids::DEVICE) && (int) child.getProperty (ids::uid, 0) == deviceUid)
+            return child;
+
+    return {};
+}
+
+std::vector<Project::AutomationTarget> Project::getAutomationTargets (const juce::ValueTree& track)
+{
+    std::vector<AutomationTarget> targets;
+    if (! track.hasType (ids::TRACK))
+        return targets;
+
+    targets.push_back ({ "gain", "Volume", { "gain", "Volume", AudioTrack::minGainDb, AudioTrack::maxGainDb, 0.0f, -12.0f, false, "dB" } });
+    targets.push_back ({ "pan", "Pan", { "pan", "Pan", -1.0f, 1.0f, 0.0f, 0.0f, false, "" } });
+
+    for (const auto& device : track)
+    {
+        if (! device.hasType (ids::DEVICE))
+            continue;
+
+        const auto deviceName = getEffectDisplayName (getDeviceType (device));
+        for (const auto& info : getDeviceParamInfos (device))
+            if (info.id != nullptr)
+                targets.push_back ({ device[ids::uid].toString() + ":" + info.id,
+                                     deviceName + ": " + juce::String (info.name), info });
+    }
+
+    return targets;
+}
+
+bool Project::findAutomationTarget (const juce::ValueTree& track, const juce::String& targetId, AutomationTarget& result)
+{
+    for (auto& t : getAutomationTargets (track))
+        if (t.id == targetId)
+        {
+            result = t;
+            return true;
+        }
+
+    return false;
+}
+
+juce::ValueTree Project::getAutomationLane (const juce::ValueTree& track, const juce::String& targetId)
+{
+    for (const auto& child : track)
+        if (isAutomationLane (child) && getAutomationTargetId (child) == targetId)
+            return child;
+
+    return {};
+}
+
+juce::ValueTree Project::getOrCreateAutomationLane (juce::ValueTree track, const juce::String& targetId)
+{
+    if (auto lane = getAutomationLane (track, targetId); lane.isValid())
+        return lane;
+
+    AutomationTarget t;
+    if (! findAutomationTarget (track, targetId, t))
+        return {};
+
+    juce::ValueTree lane (ids::AUTOMATION);
+    lane.setProperty (ids::target, targetId, nullptr);
+    track.appendChild (lane, &undoManager);
+    return lane;
+}
+
+void Project::removeAutomationLane (juce::ValueTree lane)
+{
+    auto track = lane.getParent();
+    if (isAutomationLane (lane) && track.isValid())
+        track.removeChild (lane, &undoManager);
+}
+
+namespace
+{
+    float clampToTarget (const Project::AutomationTarget& t, float value)
+    {
+        value = juce::jlimit (t.info.minValue, t.info.maxValue, value);
+        return t.info.stepped ? std::round (value) : value;
+    }
+}
+
+juce::ValueTree Project::addAutomationPoint (juce::ValueTree lane, double pointBeat, float pointValue)
+{
+    AutomationTarget t;
+    if (! isAutomationLane (lane) || ! findAutomationTarget (lane.getParent(), getAutomationTargetId (lane), t))
+        return {};
+
+    juce::ValueTree point (ids::POINT);
+    point.setProperty (ids::beat, juce::jmax (0.0, pointBeat), nullptr);
+    point.setProperty (ids::value, (double) clampToTarget (t, pointValue), nullptr);
+    lane.appendChild (point, &undoManager);
+    return point;
+}
+
+void Project::moveAutomationPoint (juce::ValueTree point, double newBeat, float newValue)
+{
+    const auto lane = point.getParent();
+    AutomationTarget t;
+    if (! point.hasType (ids::POINT) || ! findAutomationTarget (lane.getParent(), getAutomationTargetId (lane), t))
+        return;
+
+    point.setProperty (ids::beat, juce::jmax (0.0, newBeat), &undoManager);
+    point.setProperty (ids::value, (double) clampToTarget (t, newValue), &undoManager);
+}
+
+void Project::deleteAutomationPoint (juce::ValueTree point)
+{
+    auto lane = point.getParent();
+    if (point.hasType (ids::POINT) && lane.isValid())
+        lane.removeChild (point, &undoManager);
+}
+
+float Project::getAutomationValueAt (const juce::ValueTree& lane, double atBeat, float fallback)
+{
+    AutomationLane envelope;
+    for (const auto& p : lane)
+        if (p.hasType (ids::POINT))
+            envelope.points.push_back ({ getPointBeat (p), getPointValue (p) });
+
+    if (envelope.points.empty())
+        return fallback;
+
+    std::stable_sort (envelope.points.begin(), envelope.points.end(),
+                      [] (const AutomationPoint& a, const AutomationPoint& b) { return a.beat < b.beat; });
+    return envelope.valueAt (atBeat);
+}
+
+bool Project::isAutomated (const juce::ValueTree& track, const juce::String& targetId)
+{
+    const auto lane = getAutomationLane (track, targetId);
+    return lane.isValid() && lane.getChildWithName (ids::POINT).isValid();
+}
+
+juce::String Project::getDeviceParamTargetId (const juce::ValueTree& device, int paramIndex)
+{
+    const auto& infos = getDeviceParamInfos (device);
+    if (paramIndex < 0 || paramIndex >= (int) infos.size() || infos[(size_t) paramIndex].id == nullptr)
+        return {};
+
+    return device[ids::uid].toString() + ":" + infos[(size_t) paramIndex].id;
+}
+
+float Project::getEngineValue (const juce::ValueTree& track, const juce::String& targetId)
+{
+    if (indexOfTrack (track) < 0)
+        return 0.0f;
+
+    auto& engineTrack = getEngineTrack (track);
+    if (targetId == "gain") return engineTrack.getGainDb();
+    if (targetId == "pan")  return engineTrack.getPan();
+
+    const auto device = findDeviceByUid (track, targetId.upToFirstOccurrenceOf (":", false, false).getIntValue());
+    const auto paramId = targetId.fromFirstOccurrenceOf (":", false, false);
+    const auto& infos = getDeviceParamInfos (device);
+
+    for (int i = 0; i < (int) infos.size(); ++i)
+    {
+        if (paramId != infos[(size_t) i].id)
+            continue;
+
+        if (! isEffect (device))
+            return engineTrack.getSynth().getParam (i);
+
+        if (const auto instance = getEffectInstance (device))
+            return instance->getParam (i);
+    }
+
+    return getTargetModelValue (track, targetId);
+}
+
+float Project::getTargetModelValue (const juce::ValueTree& track, const juce::String& targetId)
+{
+    if (targetId == "gain") return getTrackGain (track);
+    if (targetId == "pan")  return getTrackPan (track);
+
+    const auto device = findDeviceByUid (track, targetId.upToFirstOccurrenceOf (":", false, false).getIntValue());
+    const auto paramId = targetId.fromFirstOccurrenceOf (":", false, false);
+    const auto& infos = getDeviceParamInfos (device);
+
+    for (int i = 0; i < (int) infos.size(); ++i)
+        if (paramId == infos[(size_t) i].id)
+            return getDeviceParam (device, i);
+
+    return 0.0f;
+}
+
+void Project::syncAutomation (const juce::ValueTree& track)
+{
+    if (! track.hasType (ids::TRACK) || indexOfTrack (track) < 0)
+        return;
+
+    auto& engineTrack = getEngineTrack (track);
+    auto list = std::make_unique<AutomationList>();
+    juce::StringArray automated;
+
+    for (const auto& lane : track)
+    {
+        if (! isAutomationLane (lane) || lane.getNumChildren() == 0)
+            continue;
+
+        const auto targetId = getAutomationTargetId (lane);
+        AutomationLane envelope;
+
+        if (targetId == "gain")
+            envelope.target = AutomationLane::Target::trackGain;
+        else if (targetId == "pan")
+            envelope.target = AutomationLane::Target::trackPan;
+        else
+        {
+            const auto device = findDeviceByUid (track, targetId.upToFirstOccurrenceOf (":", false, false).getIntValue());
+            const auto paramId = targetId.fromFirstOccurrenceOf (":", false, false);
+            const auto& infos = getDeviceParamInfos (device);
+            envelope.paramIndex = -1;
+
+            for (int i = 0; i < (int) infos.size(); ++i)
+                if (paramId == infos[(size_t) i].id)
+                    envelope.paramIndex = i;
+
+            if (envelope.paramIndex < 0)
+                continue; // the device or parameter no longer exists
+
+            if (isEffect (device))
+            {
+                envelope.target = AutomationLane::Target::effectParam;
+                envelope.effect = getEffectInstance (device);
+                if (envelope.effect == nullptr)
+                    continue;
+            }
+            else
+                envelope.target = AutomationLane::Target::synthParam;
+        }
+
+        for (const auto& p : lane)
+            if (p.hasType (ids::POINT))
+                envelope.points.push_back ({ getPointBeat (p), getPointValue (p) });
+
+        std::stable_sort (envelope.points.begin(), envelope.points.end(),
+                          [] (const AutomationPoint& a, const AutomationPoint& b) { return a.beat < b.beat; });
+
+        automated.add (targetId);
+        list->lanes.push_back (std::move (envelope));
+    }
+
+    // Parameters that are no longer automated go back to their model values.
+    if (! automated.contains ("gain")) engineTrack.setGainDb (getTrackGain (track));
+    if (! automated.contains ("pan"))  engineTrack.setPan (getTrackPan (track));
+
+    for (const auto& device : track)
+    {
+        if (! device.hasType (ids::DEVICE))
+            continue;
+
+        const auto& infos = getDeviceParamInfos (device);
+        const auto instance = isEffect (device) ? getEffectInstance (device) : nullptr;
+
+        for (int i = 0; i < (int) infos.size(); ++i)
+        {
+            if (automated.contains (device[ids::uid].toString() + ":" + infos[(size_t) i].id))
+                continue;
+
+            if (instance != nullptr)
+                instance->setParam (i, getDeviceParam (device, i));
+            else if (! isEffect (device))
+                engineTrack.getSynth().setParam (i, getDeviceParam (device, i));
+        }
+    }
+
+    engineTrack.setAutomation (std::move (list));
+}
+
 // ---- notes --------------------------------------------------------------------
 
 void Project::setClipLoopLength (juce::ValueTree clip, double newLoopLengthBeats)
@@ -1021,6 +1366,10 @@ void Project::valueTreePropertyChanged (juce::ValueTree& tree, const juce::Ident
         syncTrack (tree.getParent());
     else if (tree.hasType (ids::NOTE))
         syncTrack (tree.getParent().getParent());
+    else if (tree.hasType (ids::POINT))
+        syncAutomation (tree.getParent().getParent());
+    else if (tree.hasType (ids::AUTOMATION))
+        syncAutomation (tree.getParent());
     else if (tree.hasType (ids::DEVICE))
     {
         const auto track = tree.getParent();
@@ -1076,9 +1425,13 @@ void Project::valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree& chi
     {
         if (child.hasType (ids::DEVICE))
             syncDevice (parent);
+        else if (child.hasType (ids::AUTOMATION))
+            syncAutomation (parent);
         else
             syncTrack (parent);
     }
+    else if (parent.hasType (ids::AUTOMATION))
+        syncAutomation (parent.getParent());
     else if (parent.hasType (ids::CLIP))
         syncTrack (parent.getParent());
     else if (child.hasType (ids::TRACK))
@@ -1095,6 +1448,10 @@ void Project::valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree& c
 
     if (parent.hasType (ids::TRACK) && child.hasType (ids::DEVICE))
         syncEffects (parent);
+    else if (parent.hasType (ids::TRACK) && child.hasType (ids::AUTOMATION))
+        syncAutomation (parent);
+    else if (parent.hasType (ids::AUTOMATION))
+        syncAutomation (parent.getParent());
     else
         syncTrack (parent.hasType (ids::CLIP) ? parent.getParent() : parent);
 }

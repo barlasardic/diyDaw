@@ -373,8 +373,14 @@ void SynthPanel::refresh()
     for (auto& knob : controls->knobs)
     {
         const auto& info = Synth::getParamInfos()[(size_t) knob->paramIndex];
-        const auto value = haveTrack ? (double) Project::getDeviceParam (track, knob->paramIndex)
-                                     : (double) info.defaultValue;
+        const auto targetId = haveTrack ? Project::getDeviceParamTargetId (Project::getDevice (track), knob->paramIndex)
+                                        : juce::String();
+        const auto automated = haveTrack && Project::isAutomated (track, targetId);
+        showAutomationState (knob->slider, automated);
+
+        const auto value = ! haveTrack ? (double) info.defaultValue
+                         : automated   ? (double) project.getEngineValue (track, targetId)
+                                       : (double) Project::getDeviceParam (track, knob->paramIndex);
 
         if (! knob->slider.isMouseButtonDown())
             knob->slider.setValue (value, juce::dontSendNotification);

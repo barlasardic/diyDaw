@@ -17,6 +17,7 @@ namespace daw::colours
     inline const juce::Colour meterLow     { 0xff4cd964 };
     inline const juce::Colour meterMid     { 0xfff2d04c };
     inline const juce::Colour meterHigh    { 0xffff4d4d };
+    inline const juce::Colour automation   { 0xffff5f57 }; // controls driven by automation
 }
 
 namespace daw

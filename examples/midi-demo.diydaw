@@ -27,10 +27,16 @@
       <NOTE pitch="67" start="13" length="1" velocity="0.9"/>
       <NOTE pitch="69" start="14" length="2" velocity="0.9"/>
     </CLIP>
-    <DEVICE type="eq" enabled="1"/>
-    <DEVICE type="compressor" enabled="1"/>
-    <DEVICE type="reverb" enabled="1"/>
-    <DEVICE type="delay" enabled="0"/>
+    <DEVICE type="synth" uid="1"/>
+    <DEVICE type="eq" uid="2" enabled="1"/>
+    <DEVICE type="compressor" uid="3" enabled="1"/>
+    <DEVICE type="reverb" uid="4" enabled="1"/>
+    <DEVICE type="delay" uid="5" enabled="0"/>
+    <AUTOMATION target="1:filterCutoff">
+      <POINT beat="0" value="300"/>
+      <POINT beat="16" value="6000"/>
+      <POINT beat="28" value="800"/>
+    </AUTOMATION>
   </TRACK>
   <TRACK kind="midi" name="2 MIDI" colour="ff3dc8ff" gain="0" pan="0" mute="0" solo="0">
     <CLIP kind="midi" name="Bass" start="16" length="8" offsetBeats="0" loop="1" loopLength="4">
@@ -43,6 +49,11 @@
       <NOTE pitch="43" start="3.0" length="0.4" velocity="0.8999999999999999"/>
       <NOTE pitch="36" start="3.5" length="0.4" velocity="0.6"/>
     </CLIP>
+    <DEVICE type="synth" uid="6"/>
+    <AUTOMATION target="gain">
+      <POINT beat="16" value="-24"/>
+      <POINT beat="22" value="0"/>
+    </AUTOMATION>
   </TRACK>
   <TRACK kind="audio" name="3 Audio" colour="ff9be05a"/>
 </PROJECT>

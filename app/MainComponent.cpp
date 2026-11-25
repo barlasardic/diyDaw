@@ -66,10 +66,14 @@ MainComponent::MainComponent()
     // and the user can pick a device from the Audio... dialog.
     const auto error = deviceManager.initialiseWithDefaultDevices (0, 2);
     if (error.isNotEmpty())
+    {
         DBG ("Audio device error: " << error);
-    else if (auto* device = deviceManager.getCurrentAudioDevice())
+    }
+    else if ([[maybe_unused]] auto* device = deviceManager.getCurrentAudioDevice())
+    {
         DBG ("Audio device: " << device->getTypeName() << " / " << device->getName() << " @ "
              << device->getCurrentSampleRate() << " Hz, " << device->getCurrentBufferSizeSamples() << " samples");
+    }
 
     deviceManager.addAudioCallback (this);
     enableMidiInputs();

@@ -17,6 +17,8 @@ namespace ids
     DAW_DECLARE_ID (CLIP)
     DAW_DECLARE_ID (NOTE)
     DAW_DECLARE_ID (DEVICE)
+    DAW_DECLARE_ID (AUTOMATION)
+    DAW_DECLARE_ID (POINT)
 
     DAW_DECLARE_ID (name)        // TRACK, CLIP: display name
     DAW_DECLARE_ID (colour)      // TRACK: ARGB hex string
@@ -42,6 +44,10 @@ namespace ids
     DAW_DECLARE_ID (velocity)    // NOTE: 0..1
     DAW_DECLARE_ID (type)        // DEVICE: "synth", "eq", "compressor", "reverb", "delay"
     DAW_DECLARE_ID (enabled)     // DEVICE (effects): bool, false = bypassed
+    DAW_DECLARE_ID (uid)         // DEVICE: id unique within the project (automation targets refer to it)
+    DAW_DECLARE_ID (target)      // AUTOMATION: "gain", "pan" or "<device uid>:<param id>"
+    DAW_DECLARE_ID (beat)        // POINT: timeline position
+    DAW_DECLARE_ID (value)       // POINT: value in the parameter's units
     #undef DAW_DECLARE_ID
 }
 
@@ -53,10 +59,13 @@ namespace ids
             CLIP { kind="midi", name, start, length, offsetBeats, loop, loopLength }
               NOTE { pitch, start, length, velocity }      (start: content beats)
             DEVICE { type="synth", <Synth param id>=value ... }   (MIDI tracks only, first)
-            DEVICE { type="eq"|"compressor"|"reverb"|"delay", enabled, <param id>=value ... }
+            DEVICE { type="eq"|"compressor"|"reverb"|"delay", uid, enabled, <param id>=value ... }
+            AUTOMATION { target }
+              POINT { beat, value }
 
-    A track's children are its CLIPs plus its DEVICEs (the device chain, in order: the
-    instrument on MIDI tracks, then insert effects); use isClip() / isEffect() when iterating.
+    A track's children are its CLIPs, its DEVICEs (the device chain, in order: the instrument
+    on MIDI tracks, then insert effects) and its AUTOMATION lanes; use isClip() / isEffect() /
+    isAutomationLane() when iterating.
     Audio clips live on audio tracks and MIDI clips on MIDI tracks only.
 
     The tree is the single source of truth: every change (including undo/redo and loading a
@@ -175,6 +184,54 @@ public:
     /** The live engine instance behind an effect DEVICE (for meters such as gain reduction). */
     std::shared_ptr<AudioEffect> getEffectInstance (const juce::ValueTree& device) const;
 
+    // ---- automation (all undoable) ---------------------------------------------
+    /** Something on a track that can be automated. */
+    struct AutomationTarget
+    {
+        juce::String id;     // "gain", "pan" or "<device uid>:<param id>"
+        juce::String name;   // "Volume", "Pan", "Synth: Filter cutoff", "Reverb: Mix", ...
+        ParamInfo info;      // range / default / unit (info.id and info.name are not used)
+    };
+
+    /** Everything on this track that can be automated: Volume, Pan, then every parameter of
+        every device in chain order. */
+    static std::vector<AutomationTarget> getAutomationTargets (const juce::ValueTree& track);
+    static bool findAutomationTarget (const juce::ValueTree& track, const juce::String& targetId, AutomationTarget& result);
+
+    static bool isAutomationLane (const juce::ValueTree& tree) { return tree.hasType (ids::AUTOMATION); }
+    static juce::String getAutomationTargetId (const juce::ValueTree& lane) { return lane[ids::target].toString(); }
+
+    /** The lane automating 'targetId' on this track, or invalid. */
+    static juce::ValueTree getAutomationLane (const juce::ValueTree& track, const juce::String& targetId);
+
+    /** Existing lane, or a new empty one (an empty lane doesn't affect playback). */
+    juce::ValueTree getOrCreateAutomationLane (juce::ValueTree track, const juce::String& targetId);
+    void removeAutomationLane (juce::ValueTree lane);
+
+    /** Points are clamped to the target's range (beat >= 0; stepped targets rounded). */
+    juce::ValueTree addAutomationPoint (juce::ValueTree lane, double beat, float value);
+    void moveAutomationPoint (juce::ValueTree point, double newBeat, float newValue);
+    void deleteAutomationPoint (juce::ValueTree point);
+
+    static double getPointBeat (const juce::ValueTree& point) { return point[ids::beat]; }
+    static float getPointValue (const juce::ValueTree& point) { return point[ids::value]; }
+
+    /** The envelope's value at 'beat' (same rule as the engine: linear between points, holding
+        the first / last value outside them). Returns 'fallback' for a lane without points. */
+    static float getAutomationValueAt (const juce::ValueTree& lane, double beat, float fallback);
+
+    /** True when the target has automation points (the engine then follows the envelope). */
+    static bool isAutomated (const juce::ValueTree& track, const juce::String& targetId);
+
+    /** Automation target id of a device parameter ("<uid>:<paramId>"). */
+    static juce::String getDeviceParamTargetId (const juce::ValueTree& device, int paramIndex);
+
+    /** The value the engine is using right now (differs from the model while automated). */
+    float getEngineValue (const juce::ValueTree& track, const juce::String& targetId);
+
+    /** Current (non-automated) value of a target as stored in the model. */
+    static float getTargetModelValue (const juce::ValueTree& track, const juce::String& targetId);
+
     // ---- clips (all undoable) -------------------------------------------------
     static bool isClip (const juce::ValueTree& tree)     { return tree.hasType (ids::CLIP); }
     static bool isMidiClip (const juce::ValueTree& clip) { return clip.hasType (ids::CLIP) && clip[ids::kind].toString() == "midi"; }
@@ -257,6 +314,9 @@ private:
     void syncTrackMixer (const juce::ValueTree& track);
     void syncDevice (const juce::ValueTree& track);
     void syncEffects (const juce::ValueTree& track);
+    void syncAutomation (const juce::ValueTree& track);
+    int nextDeviceUid() const;
+    static juce::ValueTree findDeviceByUid (const juce::ValueTree& track, int deviceUid);
     void valueTreeChildOrderChanged (juce::ValueTree& parent, int oldIndex, int newIndex) override;
     static juce::ValueTree makeDevice();
     void syncProjectProperties();

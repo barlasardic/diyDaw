@@ -85,6 +85,15 @@ TrackHeader::TrackHeader (Project& p, juce::ValueTree t)
                          [this] (bool on) { project.setTrackSolo (track, on); });
     addAndMakeVisible (soloButton);
 
+    styleHeaderButton (automationButton, colours::accent);
+    automationButton.setTooltip ("Show automation");
+    automationButton.onClick = [this]
+    {
+        if (onAutomationToggled)
+            onAutomationToggled (automationButton.getToggleState());
+    };
+    addAndMakeVisible (automationButton);
+
     // ---- volume ---------------------------------------------------------
     configureVolumeSlider (volumeSlider);
     volumeSlider.textFromValueFunction = [] (double value) { return gainText ((float) value); };
@@ -101,6 +110,11 @@ TrackHeader::TrackHeader (Project& p, juce::ValueTree t)
     refresh();
 }
 
+void TrackHeader::setAutomationShown (bool shown)
+{
+    automationButton.setToggleState (shown, juce::dontSendNotification);
+}
+
 void TrackHeader::refresh()
 {
     auto& audioTrack = project.getEngineTrack (track);
@@ -108,10 +122,16 @@ void TrackHeader::refresh()
     meter.setLevels (audioTrack.getMeter().consume (0), audioTrack.getMeter().consume (1));
 
     // Resync from the model without notifications, but never fight the user mid-drag.
+    // While the volume is automated, show what the engine plays (red slider).
+    const auto automated = Project::isAutomated (track, "gain");
+    showAutomationState (volumeSlider, automated);
+
     if (! volumeSlider.isMouseButtonDown())
     {
-        volumeSlider.setValue (Project::getTrackGain (track), juce::dontSendNotification);
-        volumeSlider.setTooltip (gainText (Project::getTrackGain (track)));
+        const auto gain = automated ? project.getEngineValue (track, "gain") : Project::getTrackGain (track);
+        volumeSlider.setValue (gain, juce::dontSendNotification);
+        if (! automated)
+            volumeSlider.setTooltip (gainText (gain));
     }
 
     activatorButton.setToggleState (! Project::isTrackMuted (track), juce::dontSendNotification);
@@ -156,7 +176,10 @@ void TrackHeader::resized()
     // Centre the two rows vertically so taller lanes don't look top-heavy.
     area = area.withSizeKeepingCentre (area.getWidth(), juce::jlimit (0, 46, area.getHeight()));
 
-    nameLabel.setBounds (area.removeFromTop (20));
+    auto title = area.removeFromTop (20);
+    automationButton.setBounds (title.removeFromRight (22));
+    title.removeFromRight (3);
+    nameLabel.setBounds (title);
     area.removeFromTop (4);
 
     auto controls = area.removeFromTop (22);

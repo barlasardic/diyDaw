@@ -65,7 +65,10 @@ void DawLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int widt
 
     juce::Path value;
     value.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f, fromAngle, angle, true);
-    g.setColour (slider.isEnabled() ? colours::accent : colours::textDim);
+    // A slider can override the accent (e.g. red while its parameter is automated).
+    const auto fill = slider.isColourSpecified (juce::Slider::rotarySliderFillColourId)
+                          ? slider.findColour (juce::Slider::rotarySliderFillColourId) : colours::accent;
+    g.setColour (slider.isEnabled() ? fill : colours::textDim);
     g.strokePath (value, juce::PathStrokeType (lineW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
     const auto tip = centre.getPointOnCircumference (arcRadius - lineW * 1.5f, angle);
@@ -92,8 +95,10 @@ void DawLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int widt
     g.setColour (colours::outline);
     g.fillRoundedRectangle (trackRect, 2.0f);
 
+    const auto accent = slider.isColourSpecified (juce::Slider::trackColourId)
+                            ? slider.findColour (juce::Slider::trackColourId) : colours::accent;
     auto filled = vertical ? trackRect.withTop (sliderPos) : trackRect.withRight (sliderPos);
-    g.setColour (colours::accent.withAlpha (0.6f));
+    g.setColour (accent.withAlpha (0.6f));
     g.fillRoundedRectangle (filled, 2.0f);
 
     // Fader cap
@@ -103,7 +108,7 @@ void DawLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int widt
                               : juce::Rectangle<float> (capW, capH).withCentre ({ sliderPos, area.getCentreY() });
     g.setColour (colours::panelRaised.brighter (0.15f));
     g.fillRoundedRectangle (cap, 2.0f);
-    g.setColour (colours::accent);
+    g.setColour (accent);
     if (vertical)
         g.fillRect (cap.withSizeKeepingCentre (capW - 4.0f, 2.0f));
     else

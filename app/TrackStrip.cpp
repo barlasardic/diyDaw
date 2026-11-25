@@ -136,7 +136,13 @@ void TrackStrip::refresh()
     meter.setLevels (engineTrack.getMeter().consume (0), engineTrack.getMeter().consume (1));
 
     // Resync from the model without notifications, but never fight the user mid-drag.
-    const auto gain = Project::getTrackGain (track);
+    // Automated parameters show what the engine is playing.
+    const auto gainAutomated = Project::isAutomated (track, "gain");
+    const auto panAutomated = Project::isAutomated (track, "pan");
+    showAutomationState (fader, gainAutomated);
+    showAutomationState (panKnob, panAutomated);
+
+    const auto gain = gainAutomated ? project.getEngineValue (track, "gain") : Project::getTrackGain (track);
 
     if (! fader.isMouseButtonDown())
     {
@@ -145,7 +151,8 @@ void TrackStrip::refresh()
     }
 
     if (! panKnob.isMouseButtonDown())
-        panKnob.setValue (Project::getTrackPan (track), juce::dontSendNotification);
+        panKnob.setValue (panAutomated ? project.getEngineValue (track, "pan") : Project::getTrackPan (track),
+                          juce::dontSendNotification);
 
     muteButton.setToggleState (! Project::isTrackMuted (track), juce::dontSendNotification);
     soloButton.setToggleState (Project::isTrackSoloed (track), juce::dontSendNotification);

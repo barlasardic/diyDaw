@@ -37,6 +37,7 @@ void Engine::resetTracks()
         t->setSolo (false);
         t->setInstrumentEnabled (false);
         t->setEffects (std::make_unique<EffectChain>());
+        t->setAutomation (std::make_unique<AutomationList>());
         t->setName ("Audio");
     }
 }
@@ -67,7 +68,8 @@ void Engine::render (juce::AudioBuffer<float>& out, int numSamples) noexcept
 {
     out.clear (0, numSamples);
 
-    const auto chunk = bus.getNumSamples();
+    // Automation is applied once per block, so render in blocks of at most ~5 ms.
+    const auto chunk = juce::jmin (bus.getNumSamples(), automationBlockSize);
     if (chunk == 0) // not prepared yet
         return;
 

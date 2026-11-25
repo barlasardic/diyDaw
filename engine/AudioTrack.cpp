@@ -86,8 +86,33 @@ void AudioTrack::renderClip (const Clip& clip, const Transport::Block& block, in
     }
 }
 
+void AudioTrack::applyAutomation (const Transport::Block& block) noexcept
+{
+    const auto* list = automation.acquire();
+    if (list == nullptr)
+        return;
+
+    for (const auto& lane : list->lanes)
+    {
+        if (lane.points.empty())
+            continue;
+
+        const auto value = lane.valueAt (block.startBeat);
+
+        switch (lane.target)
+        {
+            case AutomationLane::Target::trackGain:   setGainDb (value); break;
+            case AutomationLane::Target::trackPan:    setPan (value); break;
+            case AutomationLane::Target::synthParam:  synth.setParam (lane.paramIndex, value); break;
+            case AutomationLane::Target::effectParam: if (lane.effect != nullptr) lane.effect->setParam (lane.paramIndex, value); break;
+        }
+    }
+}
+
 void AudioTrack::process (juce::AudioBuffer<float>& mixBus, const Transport::Block& block, bool anyTrackSoloed) noexcept
 {
+    applyAutomation (block);
+
     const auto n = juce::jmin (block.numSamples, scratch.getNumSamples());
     scratch.clear (0, n);
 

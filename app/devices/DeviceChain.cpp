@@ -245,8 +245,13 @@ namespace
 
             for (auto& knob : knobs)
             {
+                const auto targetId = Project::getDeviceParamTargetId (device, knob->paramIndex);
+                const auto automated = Project::isAutomated (device.getParent(), targetId);
+                showAutomationState (knob->slider, automated);
+
                 if (! knob->slider.isMouseButtonDown())
-                    knob->slider.setValue ((double) Project::getDeviceParam (device, knob->paramIndex),
+                    knob->slider.setValue (automated ? (double) project.getEngineValue (device.getParent(), targetId)
+                                                     : (double) Project::getDeviceParam (device, knob->paramIndex),
                                            juce::dontSendNotification);
 
                 knob->value.setText (formatParamValue (knob->info, knob->slider.getValue()),

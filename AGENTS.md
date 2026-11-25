@@ -50,6 +50,15 @@ their per-track components from ValueTree child-added/removed callbacks.
   roll on its own (loop = clip range, isolated track). `SongPositionBar` under the transport bar
   shows and scrubs the song (or pattern) position; the piano roll ruler also seeks.
 
+## Automation
+- `AUTOMATION { target }` lanes with `POINT { beat, value }` on a track; targets are "gain",
+  "pan" or "<device uid>:<param id>" (`Project::getAutomationTargets`). Every DEVICE has a
+  project-unique `uid`. The engine (`engine/Automation.h`) applies each lane's value at the
+  playhead once per block (blocks are at most `Engine::automationBlockSize` samples), also while
+  stopped; when a lane goes away the model pushes the parameter's own value again.
+- UI: the "A" button on a track header opens an automation sub-lane (target chooser, envelope
+  editor). Automated knobs/faders turn red and show the engine's value (`showAutomationState`).
+
 ## Arrangement view (interaction spec, Ableton-like)
 - Layout: TimeRuler across the top (offset by `TrackHeader::preferredWidth`), then one lane per
   track: TrackHeader on the left, clip lane on the right. Lanes ~64 px tall, vertical scroll

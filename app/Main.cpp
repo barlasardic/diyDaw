@@ -63,6 +63,8 @@ public:
             juce::Array<juce::File> audioFiles;
             for (int a = i + 3; a < args.size(); ++a)
             {
+                if (args[a] == "--show-automation")
+                    continue;
                 const auto f = juce::File::getCurrentWorkingDirectory().getChildFile (args[a].unquoted());
                 if (f.hasFileExtension (Project::fileExtension))
                 {
@@ -73,6 +75,19 @@ public:
                     audioFiles.add (f);
             }
             ui.loadFilesSynchronously (audioFiles, 4.0);
+            if (args.contains ("--show-automation"))
+            {
+                // The arrangement may be nested in the main view; keep this flag local
+                // to the offscreen snapshot path.
+                const auto expandAutomation = [] (auto&& visit, juce::Component& component) -> void
+                {
+                    if (auto* arrangement = dynamic_cast<ArrangementView*> (&component))
+                        arrangement->showAutomationForTracksWithAutomation();
+                    for (auto* child : component.getChildren())
+                        visit (visit, *child);
+                };
+                expandAutomation (expandAutomation, ui);
+            }
 
             std::unique_ptr<juce::Component> dialog;
             if (dialogName == "export")
