@@ -26,7 +26,8 @@ double ProjectRenderer::getProjectEndBeat (const Project& project)
 
     for (const auto& track : project.getState())
         for (const auto& clip : track)
-            end = juce::jmax (end, Project::getClipEnd (clip));
+            if (Project::isClip (clip))
+                end = juce::jmax (end, Project::getClipEnd (clip));
 
     return end;
 }

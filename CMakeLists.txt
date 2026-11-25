@@ -55,7 +55,8 @@ if(DAW_BUILD_TESTS)
         tests/ProjectTests.cpp
         tests/PersistenceTests.cpp
         tests/ExportTests.cpp
-        tests/SynthTests.cpp)
+        tests/SynthTests.cpp
+        tests/MidiTests.cpp)
     target_compile_definitions(DawEngineTests PRIVATE ${DAW_COMMON_DEFINITIONS})
     target_link_libraries(DawEngineTests PRIVATE
         daw_model
@@ -85,8 +86,11 @@ if(DAW_BUILD_APP)
         app/arrangement/ArrangementView.cpp
         app/arrangement/ClipPainter.cpp
         app/arrangement/TimeRuler.cpp
-        app/arrangement/TrackHeader.cpp)
-    target_include_directories(DiyDaw PRIVATE app app/arrangement)
+        app/arrangement/TrackHeader.cpp
+        app/clipeditor/PianoRoll.cpp
+        app/devices/SynthPanel.cpp
+        app/DetailView.cpp)
+    target_include_directories(DiyDaw PRIVATE app app/arrangement app/clipeditor app/devices)
     target_compile_definitions(DiyDaw PRIVATE
         ${DAW_COMMON_DEFINITIONS}
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:DiyDaw,JUCE_PRODUCT_NAME>"

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PROJECT version="1" bpm="110" beatsPerBar="4" masterGain="0">
+  <TRACK kind="midi" name="1 MIDI" colour="ffc77aff" gain="-4" pan="0" mute="0" solo="0">
+    <CLIP kind="midi" name="Chords" start="0" length="32" offsetBeats="0" loop="1" loopLength="16">
+      <NOTE pitch="57" start="0" length="3.5" velocity="0.7"/>
+      <NOTE pitch="60" start="0" length="3.5" velocity="0.7"/>
+      <NOTE pitch="64" start="0" length="3.5" velocity="0.7"/>
+      <NOTE pitch="53" start="4" length="3.5" velocity="0.7"/>
+      <NOTE pitch="57" start="4" length="3.5" velocity="0.7"/>
+      <NOTE pitch="60" start="4" length="3.5" velocity="0.7"/>
+      <NOTE pitch="48" start="8" length="3.5" velocity="0.7"/>
+      <NOTE pitch="52" start="8" length="3.5" velocity="0.7"/>
+      <NOTE pitch="55" start="8" length="3.5" velocity="0.7"/>
+      <NOTE pitch="55" start="12" length="3.5" velocity="0.7"/>
+      <NOTE pitch="59" start="12" length="3.5" velocity="0.7"/>
+      <NOTE pitch="62" start="12" length="3.5" velocity="0.7"/>
+      <NOTE pitch="72" start="0" length="1" velocity="0.9"/>
+      <NOTE pitch="71" start="1" length="0.5" velocity="0.9"/>
+      <NOTE pitch="69" start="1.5" length="1.5" velocity="0.9"/>
+      <NOTE pitch="67" start="4" length="1" velocity="0.9"/>
+      <NOTE pitch="69" start="5" length="1" velocity="0.9"/>
+      <NOTE pitch="72" start="6" length="2" velocity="0.9"/>
+      <NOTE pitch="76" start="8" length="1.5" velocity="0.9"/>
+      <NOTE pitch="74" start="9.5" length="0.5" velocity="0.9"/>
+      <NOTE pitch="72" start="10" length="2" velocity="0.9"/>
+      <NOTE pitch="71" start="12" length="1" velocity="0.9"/>
+      <NOTE pitch="67" start="13" length="1" velocity="0.9"/>
+      <NOTE pitch="69" start="14" length="2" velocity="0.9"/>
+    </CLIP>
+  </TRACK>
+  <TRACK kind="midi" name="2 MIDI" colour="ff3dc8ff" gain="0" pan="0" mute="0" solo="0">
+    <CLIP kind="midi" name="Bass" start="16" length="8" offsetBeats="0" loop="1" loopLength="4">
+      <NOTE pitch="33" start="0.0" length="0.4" velocity="0.8999999999999999"/>
+      <NOTE pitch="33" start="0.5" length="0.4" velocity="0.6"/>
+      <NOTE pitch="45" start="1.0" length="0.4" velocity="0.8999999999999999"/>
+      <NOTE pitch="33" start="1.5" length="0.4" velocity="0.6"/>
+      <NOTE pitch="31" start="2.0" length="0.4" velocity="0.8999999999999999"/>
+      <NOTE pitch="31" start="2.5" length="0.4" velocity="0.6"/>
+      <NOTE pitch="43" start="3.0" length="0.4" velocity="0.8999999999999999"/>
+      <NOTE pitch="36" start="3.5" length="0.4" velocity="0.6"/>
+    </CLIP>
+  </TRACK>
+  <TRACK kind="audio" name="3 Audio" colour="ff9be05a"/>
+</PROJECT>

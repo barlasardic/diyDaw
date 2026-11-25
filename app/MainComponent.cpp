@@ -20,12 +20,27 @@ MainComponent::MainComponent()
 
     transportBar.onFileMenu = [this] { showFileMenu(); };
     transportBar.onAddTrack = [this] { addTrack(); };
+    transportBar.onAddMidiTrack = [this] { addMidiTrack(); };
     transportBar.onAudioSettings = [this] { showAudioSettings(); };
     transportBar.onToggleView = [this] { setShowingMixer (! showingMixer); };
     addAndMakeVisible (transportBar);
 
     arrangement.onAddTrackRequested = [this] { addTrack(); };
+    arrangement.onTrackSelected = [this] (juce::ValueTree track) { selectTrack (track); };
+    arrangement.onClipSelected = [this] (juce::ValueTree clip)
+    {
+        if (Project::isMidiClip (clip) && detail.getTab() == DetailView::Tab::clip)
+            detail.showClip (clip);
+    };
+    arrangement.onClipDoubleClicked = [this] (juce::ValueTree clip)
+    {
+        selectTrack (clip.getParent());
+        detail.showClip (clip);
+    };
     addAndMakeVisible (arrangement);
+
+    detail.onPreviewNote = [this] (int pitch, float velocity, bool on) { playLiveNote (pitch, velocity, on); };
+    addAndMakeVisible (detail);
 
     stripViewport.setViewedComponent (&stripHolder, false);
     stripViewport.setScrollBarsShown (false, true);
@@ -34,7 +49,7 @@ MainComponent::MainComponent()
     addChildComponent (mixer);
 
     projectState.addListener (this);
-    project.newDocument (4);
+    project.newDocument (2, 2);
     syncStrips();
 
     // Ask for stereo out, no inputs. A failure (e.g. no device) leaves the UI usable
@@ -47,6 +62,7 @@ MainComponent::MainComponent()
              << device->getCurrentSampleRate() << " Hz, " << device->getCurrentBufferSizeSamples() << " samples");
 
     deviceManager.addAudioCallback (this);
+    enableMidiInputs();
 
     setShowingMixer (false);
     setWantsKeyboardFocus (true);
@@ -57,6 +73,7 @@ MainComponent::MainComponent()
 MainComponent::~MainComponent()
 {
     stopTimer();
+    deviceManager.removeMidiInputDeviceCallback ({}, this);
     exportJob.reset(); // stops the export thread before the project goes away
     if (exportWindow != nullptr)
         delete exportWindow.getComponent();
@@ -92,7 +109,11 @@ void MainComponent::timerCallback()
 {
     engine.collectGarbage();
     transportBar.refresh();
+    detail.refresh();
     updateTitle();
+
+    if (selectedTrack.isValid() && project.indexOfTrack (selectedTrack) < 0)
+        selectTrack ({});
 
     if (showingMixer)
     {
@@ -109,7 +130,125 @@ void MainComponent::timerCallback()
 
 void MainComponent::addTrack()
 {
-    project.addTrack(); // syncStrips() runs from the ValueTree listener
+    selectTrack (project.addTrack()); // syncStrips() runs from the ValueTree listener
+}
+
+void MainComponent::addMidiTrack()
+{
+    const auto track = project.addTrack ({}, Project::TrackKind::midi);
+    selectTrack (track);
+    detail.setTab (DetailView::Tab::device);
+}
+
+// ---- live notes -------------------------------------------------------------------
+
+void MainComponent::selectTrack (juce::ValueTree track)
+{
+    if (track == selectedTrack && track.isValid())
+        return;
+
+    // Release whatever the old track was playing live.
+    for (const auto& [key, pitch] : heldKeys)
+        playLiveNote (pitch, 0.0f, false);
+    heldKeys.clear();
+
+    selectedTrack = track;
+    liveTrackIndex.store (Project::isMidiTrack (track) ? (int) track[ids::engineIndex] : -1);
+    detail.showTrack (track);
+}
+
+void MainComponent::playLiveNote (int pitch, float velocity, bool isNoteOn)
+{
+    if (const auto index = liveTrackIndex.load(); index >= 0)
+        engine.getTrack (index).pushLiveNote (pitch, velocity, isNoteOn);
+}
+
+void MainComponent::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& message)
+{
+    if (message.isNoteOn())
+        playLiveNote (message.getNoteNumber(), message.getFloatVelocity(), true);
+    else if (message.isNoteOff())
+        playLiveNote (message.getNoteNumber(), 0.0f, false);
+    else if (message.isAllNotesOff() || message.isAllSoundOff())
+        for (int p = 0; p < 128; ++p)
+            playLiveNote (p, 0.0f, false);
+}
+
+void MainComponent::enableMidiInputs()
+{
+    // Every connected MIDI input plays the selected MIDI track (like Ableton's auto-arm).
+    for (const auto& input : juce::MidiInput::getAvailableDevices())
+        deviceManager.setMidiInputDeviceEnabled (input.identifier, true);
+
+    deviceManager.addMidiInputDeviceCallback ({}, this);
+}
+
+namespace
+{
+    /** Ableton computer-keyboard layout: semitone offsets from the current octave's C. */
+    int keyToSemitone (int keyCode)
+    {
+        static const juce::String keys ("awsedftgyhujkolp;");
+        const auto index = keys.indexOfChar ((juce::juce_wchar) juce::CharacterFunctions::toLowerCase ((juce::juce_wchar) keyCode));
+        return index;
+    }
+}
+
+bool MainComponent::handleComputerKeyboard (const juce::KeyPress& key)
+{
+    if (key.getModifiers().isAnyModifierKeyDown() || liveTrackIndex.load() < 0)
+        return false;
+
+    const auto code = key.getKeyCode();
+    const auto lower = juce::CharacterFunctions::toLowerCase ((juce::juce_wchar) code);
+
+    if (lower == 'z' || lower == 'x')
+    {
+        keyboardOctave = juce::jlimit (-2, 8, keyboardOctave + (lower == 'x' ? 1 : -1));
+        return true;
+    }
+
+    if (lower == 'c' || lower == 'v')
+    {
+        keyboardVelocity = juce::jlimit (0.05f, 1.0f, keyboardVelocity + (lower == 'v' ? 0.1f : -0.1f));
+        return true;
+    }
+
+    const auto semitone = keyToSemitone (code);
+    if (semitone < 0)
+        return false;
+
+    if (heldKeys.count (code) == 0) // ignore auto-repeat
+    {
+        const auto pitch = (keyboardOctave + 2) * 12 + semitone;
+        if (pitch >= 0 && pitch <= 127)
+        {
+            heldKeys[code] = pitch;
+            playLiveNote (pitch, keyboardVelocity, true);
+        }
+    }
+
+    return true;
+}
+
+bool MainComponent::keyStateChanged (bool)
+{
+    // Note-offs for computer-keyboard notes whose key was released.
+    auto handled = false;
+
+    for (auto it = heldKeys.begin(); it != heldKeys.end();)
+    {
+        if (! juce::KeyPress::isKeyCurrentlyDown (it->first))
+        {
+            playLiveNote (it->second, 0.0f, false);
+            it = heldKeys.erase (it);
+            handled = true;
+        }
+        else
+            ++it;
+    }
+
+    return handled;
 }
 
 void MainComponent::syncStrips()
@@ -230,7 +369,7 @@ void MainComponent::newProject()
     {
         engine.getTransport().stop();
         engine.getTransport().setPositionBeats (0.0);
-        project.newDocument (4);
+        project.newDocument (2, 2);
     });
 }
 
@@ -393,7 +532,8 @@ juce::Result MainComponent::openProjectSynchronously (const juce::File& file)
 
     for (const auto& track : project.getState())
         for (const auto& clip : track)
-            if (const auto f = Project::getClipFile (clip); samplePool.get (f) == nullptr)
+            if (const auto f = Project::getClipFile (clip); Project::isClip (clip) && ! Project::isMidiClip (clip)
+                                                             && samplePool.get (f) == nullptr)
                 if (auto sample = loadSample (f, samplePool.getFormats()))
                     samplePool.insert (SamplePool::keyFor (f), std::move (sample));
 
@@ -450,6 +590,12 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
+    if (key == juce::KeyPress::tabKey && mods.isShiftDown())
+    {
+        detail.setTab (detail.getTab() == DetailView::Tab::clip ? DetailView::Tab::device : DetailView::Tab::clip);
+        return true;
+    }
+
     if (key == juce::KeyPress::tabKey)
     {
         setShowingMixer (! showingMixer);
@@ -470,7 +616,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
 
     if (mods.isCommandDown() && key.getKeyCode() == 'T')
     {
-        addTrack();
+        mods.isShiftDown() ? addMidiTrack() : addTrack();
         return true;
     }
 
@@ -498,7 +644,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    return false;
+    return handleComputerKeyboard (key);
 }
 
 void MainComponent::paint (juce::Graphics& g)
@@ -523,6 +669,7 @@ void MainComponent::resized()
 {
     auto area = getLocalBounds();
     transportBar.setBounds (area.removeFromTop (48));
+    detail.setBounds (area.removeFromBottom (juce::jmin (DetailView::preferredHeight, area.getHeight() / 2)));
 
     arrangement.setBounds (area);
     mixer.setBounds (area);

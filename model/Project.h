@@ -15,6 +15,8 @@ namespace ids
     DAW_DECLARE_ID (PROJECT)
     DAW_DECLARE_ID (TRACK)
     DAW_DECLARE_ID (CLIP)
+    DAW_DECLARE_ID (NOTE)
+    DAW_DECLARE_ID (DEVICE)
 
     DAW_DECLARE_ID (name)        // TRACK, CLIP: display name
     DAW_DECLARE_ID (colour)      // TRACK: ARGB hex string
@@ -33,14 +35,26 @@ namespace ids
     DAW_DECLARE_ID (bpm)         // PROJECT: tempo
     DAW_DECLARE_ID (beatsPerBar) // PROJECT: time signature numerator
     DAW_DECLARE_ID (masterGain)  // PROJECT: master fader, dB
+    DAW_DECLARE_ID (kind)        // TRACK, CLIP: "audio" or "midi" (missing = audio)
+    DAW_DECLARE_ID (offsetBeats) // CLIP (midi): content beat at the clip's left edge
+    DAW_DECLARE_ID (loopLength)  // CLIP (midi): loop length in beats (content wraps when 'loop')
+    DAW_DECLARE_ID (pitch)       // NOTE: MIDI note number
+    DAW_DECLARE_ID (velocity)    // NOTE: 0..1
+    DAW_DECLARE_ID (type)        // DEVICE: "synth"
     #undef DAW_DECLARE_ID
 }
 
 /** The arrangement document: tracks and their audio clips, stored in a juce::ValueTree.
 
         PROJECT { version, bpm, beatsPerBar, masterGain }
-          TRACK { name, colour, engineIndex, gain, pan, mute, solo }
-            CLIP { name, file, start, length, offset, loop }
+          TRACK { kind, name, colour, engineIndex, gain, pan, mute, solo }
+            CLIP { kind="audio", name, file, start, length, offset (seconds), loop }
+            CLIP { kind="midi", name, start, length, offsetBeats, loop, loopLength }
+              NOTE { pitch, start, length, velocity }      (start: content beats)
+            DEVICE { type="synth", <Synth param id>=value ... }   (MIDI tracks only)
+
+    A track's children are its CLIPs plus, on MIDI tracks, one DEVICE; use isClip() when
+    iterating. Audio clips live on audio tracks and MIDI clips on MIDI tracks only.
 
     The tree is the single source of truth: every change (including undo/redo and loading a
     file) is pushed to the Engine immediately: clip edits as a fresh ClipList snapshot,
@@ -81,9 +95,9 @@ public:
     static constexpr int fileFormatVersion = 1;
     static constexpr const char* fileExtension = ".diydaw";
 
-    /** Replaces the document with an empty one holding 'numTracks' fresh tracks, default
-        tempo and mixer, no file and no undo history. */
-    void newDocument (int numTracks);
+    /** Replaces the document with an empty one holding fresh tracks (MIDI tracks first, like
+        Ableton's default set), default tempo and mixer, no file and no undo history. */
+    void newDocument (int numAudioTracks, int numMidiTracks = 0);
 
     /** Writes the project. On success it becomes the document's file and is marked saved. */
     juce::Result saveTo (const juce::File& file);
@@ -109,8 +123,12 @@ public:
     float getMasterGain() const { return state[ids::masterGain]; }
 
     // ---- tracks (adding a track is not undoable yet) ------------------------
-    /** Returns the new TRACK, or an invalid tree if the engine's track pool is full. */
-    juce::ValueTree addTrack (const juce::String& name = {});
+    enum class TrackKind { audio, midi };
+
+    /** Returns the new TRACK, or an invalid tree if the engine's track pool is full.
+        A MIDI track gets a synth DEVICE with default parameters. */
+    juce::ValueTree addTrack (const juce::String& name = {}, TrackKind kind = TrackKind::audio);
+    static bool isMidiTrack (const juce::ValueTree& track) { return track[ids::kind].toString() == "midi"; }
     int getNumTracks() const { return state.getNumChildren(); }
     juce::ValueTree getTrack (int index) const { return state.getChild (index); }
     int indexOfTrack (const juce::ValueTree& track) const { return state.indexOf (track); }
@@ -128,12 +146,26 @@ public:
     static bool isTrackMuted (const juce::ValueTree& track)  { return track[ids::mute]; }
     static bool isTrackSoloed (const juce::ValueTree& track) { return track[ids::solo]; }
 
+    // ---- instrument (MIDI tracks; undoable) -----------------------------------
+    static juce::ValueTree getDevice (const juce::ValueTree& track) { return track.getChildWithName (ids::DEVICE); }
+
+    /** Sets a Synth parameter (index into Synth::getParamInfos()); clamped like Synth does. */
+    void setDeviceParam (juce::ValueTree track, int paramIndex, float value);
+    static float getDeviceParam (const juce::ValueTree& track, int paramIndex);
+
     // ---- clips (all undoable) -------------------------------------------------
+    static bool isClip (const juce::ValueTree& tree)     { return tree.hasType (ids::CLIP); }
+    static bool isMidiClip (const juce::ValueTree& clip) { return clip.hasType (ids::CLIP) && clip[ids::kind].toString() == "midi"; }
+
+    /** Creates an empty, looping MIDI clip on a MIDI track (loop length = clip length).
+        Overwrites whatever it lands on. Returns the CLIP, or invalid on an audio track. */
+    juce::ValueTree addMidiClip (juce::ValueTree track, double startBeat, double lengthBeats);
+
     /** Places the whole sample at startBeat. The file must already be in the SamplePool
         (use SamplePool::loadAsync first). Returns the CLIP, or invalid if not loaded. */
     juce::ValueTree addClip (juce::ValueTree track, const juce::File& file, double startBeat);
 
-    /** Moves a clip (possibly to another track); overwrites whatever it lands on. */
+    /** Moves a clip (possibly to another track of the same kind); overwrites whatever it lands on. */
     void moveClip (juce::ValueTree clip, juce::ValueTree toTrack, double newStartBeat);
 
     /** Moves the left edge, keeping the right edge and the audio under it in place. */
@@ -159,6 +191,27 @@ public:
     static bool isClipLooping (const juce::ValueTree& clip)   { return clip[ids::loop]; }
     static juce::File getClipFile (const juce::ValueTree& clip) { return juce::File (clip[ids::file].toString()); }
     static juce::String getClipName (const juce::ValueTree& clip) { return clip[ids::name].toString(); }
+    static double getClipOffsetBeats (const juce::ValueTree& clip) { return clip[ids::offsetBeats]; }
+    static double getClipLoopLength (const juce::ValueTree& clip)  { return clip[ids::loopLength]; }
+
+    /** Sets a MIDI clip's loop length (content beats, >= minClipLengthBeats); the offset is
+        re-wrapped into the new loop. */
+    void setClipLoopLength (juce::ValueTree clip, double newLoopLengthBeats);
+
+    // ---- notes (MIDI clips; all undoable) -------------------------------------
+    static constexpr double minNoteLengthBeats = 1.0 / 64.0;
+
+    /** Adds a note in content beats. Returns the NOTE, or invalid if 'clip' isn't a MIDI clip. */
+    juce::ValueTree addNote (juce::ValueTree clip, int pitch, double startBeat, double lengthBeats, float velocity = 0.8f);
+    void moveNote (juce::ValueTree note, double newStartBeat, int newPitch);
+    void setNoteLength (juce::ValueTree note, double newLengthBeats);
+    void setNoteVelocity (juce::ValueTree note, float newVelocity);
+    void deleteNote (juce::ValueTree note);
+
+    static double getNoteStart (const juce::ValueTree& note)   { return note[ids::start]; }
+    static double getNoteLength (const juce::ValueTree& note)  { return note[ids::length]; }
+    static int getNotePitch (const juce::ValueTree& note)      { return note[ids::pitch]; }
+    static float getNoteVelocity (const juce::ValueTree& note) { return note[ids::velocity]; }
 
     /** The decoded sample behind a clip, or nullptr if it isn't loaded. */
     SamplePool::Ptr getClipSample (const juce::ValueTree& clip) const;
@@ -175,12 +228,17 @@ private:
     juce::ValueTree splitInternal (juce::ValueTree clip, double atBeat);
     void setStartKeepingEnd (juce::ValueTree clip, double newStart);
     double normaliseOffset (const juce::ValueTree& clip, double offsetSeconds) const;
+    double normaliseOffsetBeats (const juce::ValueTree& clip, double offsetBeats) const;
+    /** Moves the clip's content by deltaBeats (audio: converted to seconds at the tempo). */
+    void shiftContent (juce::ValueTree clip, double deltaBeats);
     void syncTrack (const juce::ValueTree& track);
     void syncTrackMixer (const juce::ValueTree& track);
+    void syncDevice (const juce::ValueTree& track);
+    static juce::ValueTree makeDevice();
     void syncProjectProperties();
     /** Swaps in a new set of tracks (and PROJECT properties) without undo; resets the engine. */
     juce::String replaceContents (const juce::ValueTree& newState);
-    juce::ValueTree makeTrack (int number);
+    juce::ValueTree makeTrack (int number, TrackKind kind = TrackKind::audio);
 
     void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override;
     void valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree& child) override;

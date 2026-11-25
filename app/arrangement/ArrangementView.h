@@ -38,8 +38,14 @@ public:
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
     void filesDropped (const juce::StringArray& files, int x, int y) override;
 
-    /** Synchronously adds a track and its mixer strip. Set by the owner. */
+    /** Synchronously adds an audio track (used when files are dropped below the last lane or
+        onto a MIDI track). Set by the owner. */
     std::function<void()> onAddTrackRequested;
+
+    /** A clip was clicked / double-clicked (double-click on an empty MIDI lane spot creates a
+        clip first), and a lane was clicked (its track). */
+    std::function<void (juce::ValueTree clip)> onClipSelected, onClipDoubleClicked;
+    std::function<void (juce::ValueTree track)> onTrackSelected;
 
 private:
     class Lanes;

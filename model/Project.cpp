@@ -108,10 +108,37 @@ namespace
         {
             setDouble (tree, ids::start, 0.0);
             setDouble (tree, ids::length, Project::minClipLengthBeats);
-            setDouble (tree, ids::offset, 0.0);
             setBool (tree, ids::loop);
+
+            if (Project::isMidiClip (tree))
+            {
+                setDouble (tree, ids::offsetBeats, 0.0);
+                setDouble (tree, ids::loopLength, (double) tree[ids::length]);
+                tree.setProperty (ids::loopLength, juce::jmax (Project::minClipLengthBeats, (double) tree[ids::loopLength]), nullptr);
+            }
+            else
+            {
+                setDouble (tree, ids::offset, 0.0);
+            }
+
             tree.setProperty (ids::start, juce::jmax (0.0, (double) tree[ids::start]), nullptr);
             tree.setProperty (ids::length, juce::jmax (Project::minClipLengthBeats, (double) tree[ids::length]), nullptr);
+        }
+        else if (tree.hasType (ids::NOTE))
+        {
+            setDouble (tree, ids::start, 0.0);
+            setDouble (tree, ids::length, 0.25);
+            setDouble (tree, ids::velocity, 0.8);
+            tree.setProperty (ids::pitch, juce::jlimit (0, 127, (int) tree.getProperty (ids::pitch, 60)), nullptr);
+            tree.setProperty (ids::start, juce::jmax (0.0, (double) tree[ids::start]), nullptr);
+            tree.setProperty (ids::length, juce::jmax (Project::minNoteLengthBeats, (double) tree[ids::length]), nullptr);
+            tree.setProperty (ids::velocity, juce::jlimit (0.0, 1.0, (double) tree[ids::velocity]), nullptr);
+        }
+        else if (tree.hasType (ids::DEVICE))
+        {
+            for (const auto& info : Synth::getParamInfos())
+                if (info.id != nullptr && tree.hasProperty (info.id))
+                    tree.setProperty (info.id, parseExactDouble (tree[info.id]), nullptr);
         }
 
         for (auto child : tree)
@@ -119,15 +146,33 @@ namespace
     }
 }
 
-juce::ValueTree Project::makeTrack (int number)
+juce::ValueTree Project::makeDevice()
 {
+    juce::ValueTree device (ids::DEVICE);
+    device.setProperty (ids::type, "synth", nullptr);
+
+    for (const auto& info : Synth::getParamInfos())
+        if (info.id != nullptr)
+            device.setProperty (info.id, (double) info.defaultValue, nullptr);
+
+    return device;
+}
+
+juce::ValueTree Project::makeTrack (int number, TrackKind trackKind)
+{
+    const auto midi = trackKind == TrackKind::midi;
     juce::ValueTree track (ids::TRACK);
-    track.setProperty (ids::name, juce::String (number) + " Audio", nullptr);
+    track.setProperty (ids::kind, midi ? "midi" : "audio", nullptr);
+    track.setProperty (ids::name, juce::String (number) + (midi ? " MIDI" : " Audio"), nullptr);
     track.setProperty (ids::colour, trackPalette[(size_t) (number - 1) % std::size (trackPalette)].toString(), nullptr);
     track.setProperty (ids::gain, 0.0, nullptr);
     track.setProperty (ids::pan, 0.0, nullptr);
     track.setProperty (ids::mute, false, nullptr);
     track.setProperty (ids::solo, false, nullptr);
+
+    if (midi)
+        track.appendChild (makeDevice(), nullptr);
+
     return track;
 }
 
@@ -169,10 +214,29 @@ juce::String Project::replaceContents (const juce::ValueTree& newState)
         if (! track.hasProperty (ids::colour))
             track.setProperty (ids::colour, makeTrack (getNumTracks() + 1)[ids::colour], nullptr);
 
-        // Drop anything that isn't a clip, so the rest of the code can trust the structure.
+        // Enforce the structure the rest of the code trusts: clips of the track's kind,
+        // and exactly one DEVICE on MIDI tracks.
+        const auto midi = isMidiTrack (track);
+        track.setProperty (ids::kind, midi ? "midi" : "audio", nullptr);
+        auto haveDevice = false;
+
         for (int i = track.getNumChildren(); --i >= 0;)
-            if (! track.getChild (i).hasType (ids::CLIP))
+        {
+            const auto child = track.getChild (i);
+            const auto keep = (child.hasType (ids::CLIP) && isMidiClip (child) == midi)
+                           || (midi && child.hasType (ids::DEVICE) && ! haveDevice);
+            haveDevice = haveDevice || (keep && child.hasType (ids::DEVICE));
+
+            if (! keep)
                 track.removeChild (i, nullptr);
+            else if (isMidiClip (child))
+                for (int n = child.getNumChildren(); --n >= 0;)
+                    if (! child.getChild (n).hasType (ids::NOTE))
+                        juce::ValueTree (child).removeChild (n, nullptr);
+        }
+
+        if (midi && ! haveDevice)
+            track.appendChild (makeDevice(), nullptr);
 
         state.appendChild (track, nullptr);
     }
@@ -182,11 +246,11 @@ juce::String Project::replaceContents (const juce::ValueTree& newState)
     return warning;
 }
 
-void Project::newDocument (int numTracks)
+void Project::newDocument (int numAudioTracks, int numMidiTracks)
 {
     juce::ValueTree fresh (ids::PROJECT);
-    for (int i = 0; i < juce::jmin (numTracks, Engine::maxTracks); ++i)
-        fresh.appendChild (makeTrack (i + 1), nullptr);
+    for (int i = 0; i < juce::jmin (numAudioTracks + numMidiTracks, Engine::maxTracks); ++i)
+        fresh.appendChild (makeTrack (i + 1, i < numMidiTracks ? TrackKind::midi : TrackKind::audio), nullptr);
 
     replaceContents (fresh);
     documentFile = juce::File();
@@ -208,7 +272,8 @@ juce::Result Project::saveTo (const juce::File& file)
         track.removeProperty (ids::engineIndex, nullptr); // runtime only
 
         for (auto clip : track)
-            clip.setProperty (ids::relativeFile, getClipFile (clip).getRelativePathFrom (folder), nullptr);
+            if (isClip (clip) && ! isMidiClip (clip))
+                clip.setProperty (ids::relativeFile, getClipFile (clip).getRelativePathFrom (folder), nullptr);
     }
 
     writeDoublesExactly (copy);
@@ -251,6 +316,9 @@ juce::Result Project::loadFrom (const juce::File& file)
     {
         for (auto clip : track)
         {
+            if (! isClip (clip) || isMidiClip (clip))
+                continue;
+
             auto sampleFile = getClipFile (clip);
             const auto relative = clip[ids::relativeFile].toString();
 
@@ -300,13 +368,13 @@ void Project::syncProjectProperties()
 
 // ---- tracks -----------------------------------------------------------------
 
-juce::ValueTree Project::addTrack (const juce::String& name)
+juce::ValueTree Project::addTrack (const juce::String& name, TrackKind trackKind)
 {
     const auto index = engine.addTrack();
     if (index < 0)
         return {};
 
-    auto track = makeTrack (getNumTracks() + 1);
+    auto track = makeTrack (getNumTracks() + 1, trackKind);
     if (name.isNotEmpty())
         track.setProperty (ids::name, name, nullptr);
 
@@ -355,6 +423,48 @@ void Project::setTrackSolo (juce::ValueTree track, bool shouldSolo)
         track.setProperty (ids::solo, shouldSolo, &undoManager);
 }
 
+void Project::setDeviceParam (juce::ValueTree track, int paramIndex, float value)
+{
+    auto device = getDevice (track);
+    if (! device.isValid() || paramIndex < 0 || paramIndex >= Synth::numParams)
+        return;
+
+    const auto& info = Synth::getParamInfos()[(size_t) paramIndex];
+    if (info.id == nullptr)
+        return;
+
+    value = juce::jlimit (info.minValue, info.maxValue, value);
+    if (info.stepped)
+        value = std::round (value);
+
+    device.setProperty (info.id, (double) value, &undoManager);
+}
+
+float Project::getDeviceParam (const juce::ValueTree& track, int paramIndex)
+{
+    if (paramIndex < 0 || paramIndex >= Synth::numParams)
+        return 0.0f;
+
+    const auto& info = Synth::getParamInfos()[(size_t) paramIndex];
+    if (info.id == nullptr)
+        return 0.0f;
+
+    return (float) getDevice (track).getProperty (info.id, info.defaultValue);
+}
+
+void Project::syncDevice (const juce::ValueTree& track)
+{
+    if (! track.hasType (ids::TRACK))
+        return;
+
+    auto& t = getEngineTrack (track);
+    t.setInstrumentEnabled (isMidiTrack (track));
+
+    if (isMidiTrack (track))
+        for (int i = 0; i < Synth::numParams; ++i)
+            t.getSynth().setParam (i, getDeviceParam (track, i));
+}
+
 void Project::syncTrackMixer (const juce::ValueTree& track)
 {
     if (! track.hasType (ids::TRACK))
@@ -389,7 +499,7 @@ double Project::normaliseOffset (const juce::ValueTree& clip, double offsetSecon
 juce::ValueTree Project::addClip (juce::ValueTree track, const juce::File& file, double startBeat)
 {
     const auto sample = pool.get (file);
-    if (sample == nullptr || ! track.hasType (ids::TRACK))
+    if (sample == nullptr || ! track.hasType (ids::TRACK) || isMidiTrack (track))
         return {};
 
     startBeat = juce::jmax (0.0, startBeat);
@@ -398,6 +508,7 @@ juce::ValueTree Project::addClip (juce::ValueTree track, const juce::File& file,
     clearRegion (track, startBeat, startBeat + length, {});
 
     juce::ValueTree clip (ids::CLIP);
+    clip.setProperty (ids::kind, "audio", nullptr);
     clip.setProperty (ids::name, sample->name, nullptr);
     clip.setProperty (ids::file, SamplePool::keyFor (file), nullptr);
     clip.setProperty (ids::start, startBeat, nullptr);
@@ -408,9 +519,31 @@ juce::ValueTree Project::addClip (juce::ValueTree track, const juce::File& file,
     return clip;
 }
 
+juce::ValueTree Project::addMidiClip (juce::ValueTree track, double startBeat, double lengthBeats)
+{
+    if (! track.hasType (ids::TRACK) || ! isMidiTrack (track))
+        return {};
+
+    startBeat = juce::jmax (0.0, startBeat);
+    lengthBeats = juce::jmax (minClipLengthBeats, lengthBeats);
+
+    clearRegion (track, startBeat, startBeat + lengthBeats, {});
+
+    juce::ValueTree clip (ids::CLIP);
+    clip.setProperty (ids::kind, "midi", nullptr);
+    clip.setProperty (ids::name, "MIDI Clip", nullptr);
+    clip.setProperty (ids::start, startBeat, nullptr);
+    clip.setProperty (ids::length, lengthBeats, nullptr);
+    clip.setProperty (ids::offsetBeats, 0.0, nullptr);
+    clip.setProperty (ids::loop, true, nullptr);
+    clip.setProperty (ids::loopLength, lengthBeats, nullptr);
+    track.appendChild (clip, &undoManager);
+    return clip;
+}
+
 void Project::moveClip (juce::ValueTree clip, juce::ValueTree toTrack, double newStartBeat)
 {
-    if (! clip.hasType (ids::CLIP) || ! toTrack.hasType (ids::TRACK))
+    if (! clip.hasType (ids::CLIP) || ! toTrack.hasType (ids::TRACK) || isMidiClip (clip) != isMidiTrack (toTrack))
         return;
 
     newStartBeat = juce::jmax (0.0, newStartBeat);
@@ -427,13 +560,33 @@ void Project::moveClip (juce::ValueTree clip, juce::ValueTree toTrack, double ne
     clearRegion (toTrack, newStartBeat, newStartBeat + length, clip);
 }
 
+double Project::normaliseOffsetBeats (const juce::ValueTree& clip, double offsetBeats) const
+{
+    const auto len = getClipLoopLength (clip);
+
+    if (isClipLooping (clip) && len > 0.0)
+    {
+        offsetBeats = std::fmod (offsetBeats, len);
+        return offsetBeats < 0.0 ? offsetBeats + len : offsetBeats;
+    }
+
+    return juce::jmax (0.0, offsetBeats);
+}
+
+void Project::shiftContent (juce::ValueTree clip, double deltaBeats)
+{
+    if (isMidiClip (clip))
+        clip.setProperty (ids::offsetBeats, normaliseOffsetBeats (clip, getClipOffsetBeats (clip) + deltaBeats), &undoManager);
+    else
+        clip.setProperty (ids::offset, normaliseOffset (clip, getClipOffset (clip) + beatsToSeconds (deltaBeats)), &undoManager);
+}
+
 void Project::setStartKeepingEnd (juce::ValueTree clip, double newStart)
 {
     const auto oldStart = getClipStart (clip);
     const auto end = getClipEnd (clip);
-    const auto newOffset = normaliseOffset (clip, getClipOffset (clip) + beatsToSeconds (newStart - oldStart));
 
-    clip.setProperty (ids::offset, newOffset, &undoManager);
+    shiftContent (clip, newStart - oldStart);
     clip.setProperty (ids::start, newStart, &undoManager);
     clip.setProperty (ids::length, end - newStart, &undoManager);
 }
@@ -447,8 +600,9 @@ void Project::trimClipStart (juce::ValueTree clip, double newStartBeat)
     const auto end = getClipEnd (clip);
 
     auto earliest = 0.0;
-    if (! isClipLooping (clip)) // can't reveal audio from before the sample's first frame
-        earliest = juce::jmax (0.0, start - secondsToBeats (getClipOffset (clip)));
+    if (! isClipLooping (clip)) // can't reveal content from before its beginning
+        earliest = juce::jmax (0.0, start - (isMidiClip (clip) ? getClipOffsetBeats (clip)
+                                                               : secondsToBeats (getClipOffset (clip))));
 
     newStartBeat = juce::jlimit (earliest, end - minClipLengthBeats, newStartBeat);
     if (juce::exactlyEqual (newStartBeat, start))
@@ -466,7 +620,7 @@ void Project::trimClipEnd (juce::ValueTree clip, double newEndBeat)
     const auto start = getClipStart (clip);
     auto latest = std::numeric_limits<double>::max();
 
-    if (! isClipLooping (clip))
+    if (! isClipLooping (clip) && ! isMidiClip (clip))
         if (const auto sample = getClipSample (clip))
             latest = start + secondsToBeats (sample->getLengthSeconds() - getClipOffset (clip));
 
@@ -482,6 +636,13 @@ void Project::setClipLooping (juce::ValueTree clip, bool shouldLoop)
         return;
 
     clip.setProperty (ids::loop, shouldLoop, &undoManager);
+
+    if (isMidiClip (clip))
+    {
+        // Keep the offset inside the loop when looping is switched back on.
+        clip.setProperty (ids::offsetBeats, normaliseOffsetBeats (clip, getClipOffsetBeats (clip)), &undoManager);
+        return;
+    }
 
     // A one-shot can't be longer than the audio left after its offset.
     if (! shouldLoop)
@@ -518,7 +679,11 @@ juce::ValueTree Project::splitInternal (juce::ValueTree clip, double atBeat)
 
     right.setProperty (ids::start, atBeat, nullptr);
     right.setProperty (ids::length, end - atBeat, nullptr);
-    right.setProperty (ids::offset, normaliseOffset (clip, getClipOffset (clip) + beatsToSeconds (atBeat - start)), nullptr);
+
+    if (isMidiClip (clip))
+        right.setProperty (ids::offsetBeats, normaliseOffsetBeats (clip, getClipOffsetBeats (clip) + (atBeat - start)), nullptr);
+    else
+        right.setProperty (ids::offset, normaliseOffset (clip, getClipOffset (clip) + beatsToSeconds (atBeat - start)), nullptr);
 
     clip.setProperty (ids::length, atBeat - start, &undoManager);
     clip.getParent().appendChild (right, &undoManager);
@@ -544,7 +709,7 @@ void Project::clearRegion (juce::ValueTree track, double start, double end, cons
     // Snapshot the children first: the loop adds and removes clips.
     juce::Array<juce::ValueTree> clips;
     for (const auto& c : track)
-        if (c != except)
+        if (isClip (c) && c != except)
             clips.add (c);
 
     for (auto c : clips)
@@ -569,6 +734,59 @@ void Project::clearRegion (juce::ValueTree track, double start, double end, cons
     }
 }
 
+// ---- notes --------------------------------------------------------------------
+
+void Project::setClipLoopLength (juce::ValueTree clip, double newLoopLengthBeats)
+{
+    if (! isMidiClip (clip))
+        return;
+
+    clip.setProperty (ids::loopLength, juce::jmax (minClipLengthBeats, newLoopLengthBeats), &undoManager);
+    clip.setProperty (ids::offsetBeats, normaliseOffsetBeats (clip, getClipOffsetBeats (clip)), &undoManager);
+}
+
+juce::ValueTree Project::addNote (juce::ValueTree clip, int notePitch, double startBeat, double lengthBeats, float noteVelocity)
+{
+    if (! isMidiClip (clip))
+        return {};
+
+    juce::ValueTree note (ids::NOTE);
+    note.setProperty (ids::pitch, juce::jlimit (0, 127, notePitch), nullptr);
+    note.setProperty (ids::start, juce::jmax (0.0, startBeat), nullptr);
+    note.setProperty (ids::length, juce::jmax (minNoteLengthBeats, lengthBeats), nullptr);
+    note.setProperty (ids::velocity, (double) juce::jlimit (0.0f, 1.0f, noteVelocity), nullptr);
+    clip.appendChild (note, &undoManager);
+    return note;
+}
+
+void Project::moveNote (juce::ValueTree note, double newStartBeat, int newPitch)
+{
+    if (! note.hasType (ids::NOTE))
+        return;
+
+    note.setProperty (ids::start, juce::jmax (0.0, newStartBeat), &undoManager);
+    note.setProperty (ids::pitch, juce::jlimit (0, 127, newPitch), &undoManager);
+}
+
+void Project::setNoteLength (juce::ValueTree note, double newLengthBeats)
+{
+    if (note.hasType (ids::NOTE))
+        note.setProperty (ids::length, juce::jmax (minNoteLengthBeats, newLengthBeats), &undoManager);
+}
+
+void Project::setNoteVelocity (juce::ValueTree note, float newVelocity)
+{
+    if (note.hasType (ids::NOTE))
+        note.setProperty (ids::velocity, (double) juce::jlimit (0.0f, 1.0f, newVelocity), &undoManager);
+}
+
+void Project::deleteNote (juce::ValueTree note)
+{
+    auto clip = note.getParent();
+    if (note.hasType (ids::NOTE) && clip.isValid())
+        clip.removeChild (note, &undoManager);
+}
+
 // ---- engine sync ------------------------------------------------------------
 
 void Project::syncTrack (const juce::ValueTree& track)
@@ -580,15 +798,37 @@ void Project::syncTrack (const juce::ValueTree& track)
 
     for (const auto& c : track)
     {
-        Clip clip;
-        clip.sample = getClipSample (c);
-        if (clip.sample == nullptr)
-            continue; // not loaded yet; syncAllTracks() picks it up later
+        if (! isClip (c))
+            continue;
 
+        Clip clip;
         clip.startBeat = getClipStart (c);
         clip.lengthBeats = getClipLength (c);
-        clip.offsetSeconds = getClipOffset (c);
         clip.looping = isClipLooping (c);
+
+        if (isMidiClip (c))
+        {
+            auto sequence = std::make_shared<MidiSequence>();
+            for (const auto& n : c)
+                if (n.hasType (ids::NOTE))
+                    sequence->notes.push_back ({ getNoteStart (n), getNoteLength (n), getNotePitch (n), getNoteVelocity (n) });
+
+            std::sort (sequence->notes.begin(), sequence->notes.end(),
+                       [] (const MidiNote& a, const MidiNote& b) { return a.startBeat < b.startBeat; });
+
+            clip.notes = std::move (sequence);
+            clip.offsetBeats = getClipOffsetBeats (c);
+            clip.loopLengthBeats = getClipLoopLength (c);
+        }
+        else
+        {
+            clip.sample = getClipSample (c);
+            if (clip.sample == nullptr)
+                continue; // not loaded yet; syncAllTracks() picks it up later
+
+            clip.offsetSeconds = getClipOffset (c);
+        }
+
         list->clips.push_back (std::move (clip));
     }
 
@@ -612,6 +852,16 @@ void Project::valueTreePropertyChanged (juce::ValueTree& tree, const juce::Ident
 
     if (tree.hasType (ids::CLIP))
         syncTrack (tree.getParent());
+    else if (tree.hasType (ids::NOTE))
+        syncTrack (tree.getParent().getParent());
+    else if (tree.hasType (ids::DEVICE))
+    {
+        const auto track = tree.getParent();
+        const auto& infos = Synth::getParamInfos();
+        for (int i = 0; i < Synth::numParams; ++i)
+            if (infos[(size_t) i].id != nullptr && property == juce::Identifier (infos[(size_t) i].id))
+                getEngineTrack (track).getSynth().setParam (i, getDeviceParam (track, i));
+    }
     else if (tree.hasType (ids::TRACK))
     {
         if (property == ids::gain || property == ids::pan || property == ids::mute || property == ids::solo)
@@ -622,6 +872,7 @@ void Project::valueTreePropertyChanged (juce::ValueTree& tree, const juce::Ident
         {
             syncTrack (tree);
             syncTrackMixer (tree);
+            syncDevice (tree);
         }
     }
     else if (tree == state)
@@ -640,18 +891,26 @@ void Project::valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree& chi
     unsavedChanges = true;
 
     if (parent.hasType (ids::TRACK))
-        syncTrack (parent);
+    {
+        if (child.hasType (ids::DEVICE))
+            syncDevice (parent);
+        else
+            syncTrack (parent);
+    }
+    else if (parent.hasType (ids::CLIP))
+        syncTrack (parent.getParent());
     else if (child.hasType (ids::TRACK))
     {
         syncTrack (child);
         syncTrackMixer (child);
+        syncDevice (child);
     }
 }
 
 void Project::valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree&, int)
 {
     unsavedChanges = true;
-    syncTrack (parent);
+    syncTrack (parent.hasType (ids::CLIP) ? parent.getParent() : parent);
 }
 
 } // namespace daw

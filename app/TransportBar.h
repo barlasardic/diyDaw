@@ -22,6 +22,7 @@ public:
 
     std::function<void()> onFileMenu; // the owner shows the menu (it owns the file actions)
     std::function<void()> onAddTrack;
+    std::function<void()> onAddMidiTrack;
     std::function<void()> onAudioSettings;
     std::function<void()> onToggleView;
 
@@ -47,7 +48,8 @@ private:
     juce::Label bpmCaption { {}, "BPM" };
     juce::TextButton metronomeButton { "Click" };
     juce::Label positionLabel;
-    juce::TextButton addTrackButton { "+ Track" };
+    juce::TextButton addTrackButton { "+ Audio" };
+    juce::TextButton addMidiTrackButton { "+ MIDI" };
     juce::TextButton settingsButton { "Audio..." };
     juce::TextButton viewButton { "Mixer" };
 

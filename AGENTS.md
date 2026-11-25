@@ -14,6 +14,9 @@ fresh clones need `git submodule update --init`).
 - `app/` — JUCE GUI application (transport bar, mixer strips, meters, look-and-feel).
 - `app/arrangement/` — arrangement view: `TimelineGeometry` (beats<->pixels, grid, snap),
   `TimeRuler`, `TrackHeader`, `ClipPainter`, `ArrangementView`.
+- `app/DetailView` — Ableton's bottom panel: Clip tab (`app/clipeditor/PianoRoll`) and Device
+  tab (`app/devices/SynthPanel`). `app/ExportDialog` — Export Audio dialog + background job.
+- `examples/` — small projects for snapshots and manual testing (`midi-demo.diydaw`).
 - `tests/` — headless `juce::UnitTest` tests, category `"diyDaw"`, run by `DawEngineTests`.
 
 ## Data flow
@@ -23,6 +26,18 @@ mixer atomics -> audio thread. The UI never edits the ValueTree or engine state 
 toggles use `bindSliderToProject` / `bindToggleToProject` (`app/ProjectControls.h`) so each
 gesture is one undo step. Loading a file replaces the tree's children, so views must sync
 their per-track components from ValueTree child-added/removed callbacks.
+
+## MIDI
+- Track kinds: audio and MIDI (`TRACK kind`). A MIDI track has one `DEVICE` child (the Synth's
+  parameters by `Synth::ParamInfo::id`) and MIDI `CLIP`s with `NOTE` children (content beats).
+  Iterate a track's clips with `Project::isClip()` — not every child is a clip.
+- Engine: `AudioTrack` turns MIDI clips into sample-accurate `NoteEvent`s for its `Synth`
+  (`engine/Instrument.h`); it tracks sounding notes itself so stops, seeks and edits never hang
+  notes. Live notes (computer keyboard, MIDI inputs, piano-roll preview) go through
+  `AudioTrack::pushLiveNote` to the selected MIDI track.
+- Keys: Ctrl+Shift+T new MIDI track; Shift+Tab switches the detail view between Clip and
+  Device; A W S E D F T G Y H U J K play notes, Z/X octave, C/V velocity (no modifiers).
+- Double-click empty space on a MIDI lane creates a one-bar clip; double-click a clip opens it.
 
 ## Arrangement view (interaction spec, Ableton-like)
 - Layout: TimeRuler across the top (offset by `TrackHeader::preferredWidth`), then one lane per
@@ -58,7 +73,10 @@ Visual check of the UI without opening a window:
 ```
 ./build-noaudio/DiyDaw_artefacts/Debug/diyDaw --snapshot ui.png 1280x560 [a.wav b.wav ...]
 ```
-Audio file i is placed on track i at bar i+1, so you can check clip/waveform drawing.
+Audio file i is placed on track i at bar i+1, so you can check clip/waveform drawing. A
+`.diydaw` argument opens that project instead. `--dialog export|pianoroll|synth` snapshots that
+panel (piano roll / synth of the project's first MIDI clip / track). Headless bounce:
+`diyDaw --export out.wav project.diydaw`.
 
 ## Real-time rules (audio thread = Engine::render and everything it calls)
 - No allocation, no locks, no file/console I/O, no exceptions, no waiting.

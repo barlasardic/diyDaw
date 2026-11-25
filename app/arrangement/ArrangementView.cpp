@@ -155,8 +155,7 @@ public:
                 const auto isSource = drag.hasMoved && drag.clip == clip;
                 if (isSource)
                     g.beginTransparencyLayer (0.25f);
-                paintClip (g, bounds, drawInfo (clip, track, Project::getClipOffset (clip),
-                                               Project::getClipLength (clip)));
+                paintClip (g, bounds, drawInfo (clip, track, contentOffset (clip), Project::getClipLength (clip)));
                 if (isSource)
                     g.endTransparencyLayer();
             }
@@ -203,6 +202,13 @@ public:
         const auto point = timelinePoint (event);
         const auto clip = clipAt (point);
         select (clip);
+
+        if (const auto row = (int) point.y / laneHeight; row < owner.project.getNumTracks() && owner.onTrackSelected)
+            owner.onTrackSelected (owner.project.getTrack (row));
+
+        if (clip.isValid() && owner.onClipSelected)
+            owner.onClipSelected (clip);
+
         if (! clip.isValid())
         {
             auto beat = owner.geometry.xToBeat (point.x);
@@ -217,7 +223,7 @@ public:
         drag.track = clip.getParent();
         drag.start = drag.originalStart = Project::getClipStart (clip);
         drag.length = drag.originalLength = Project::getClipLength (clip);
-        drag.offset = Project::getClipOffset (clip);
+        drag.offset = contentOffset (clip);
         drag.anchorBeat = owner.geometry.xToBeat (point.x);
         drag.mode = modeAt (clip, point.x);
         updateCursor (point);
@@ -267,6 +273,40 @@ public:
                 select (completed.clip);
         }
         updateCursor (timelinePoint (event));
+    }
+
+    void mouseDoubleClick (const juce::MouseEvent& event) override
+    {
+        if (! event.mods.isLeftButtonDown() || event.x < TrackHeader::preferredWidth)
+            return;
+
+        cancelDrag();
+        const auto point = timelinePoint (event);
+        const auto row = (int) point.y / laneHeight;
+        if (point.y < 0.0f || row >= owner.project.getNumTracks())
+            return;
+
+        auto clip = clipAt (point);
+
+        // Ableton: double-clicking empty space on a MIDI track creates a one-bar clip.
+        if (! clip.isValid())
+        {
+            const auto track = owner.project.getTrack (row);
+            if (! Project::isMidiTrack (track))
+                return;
+
+            const auto barLength = (double) juce::jmax (1, owner.project.getEngine().getTransport().getBeatsPerBar());
+            const auto start = std::floor (owner.geometry.xToBeat (point.x) / barLength) * barLength;
+            owner.project.beginTransaction ("Insert MIDI clip");
+            clip = owner.project.addMidiClip (track, juce::jmax (0.0, start), barLength);
+        }
+
+        if (clip.isValid())
+        {
+            select (clip);
+            if (owner.onClipDoubleClicked)
+                owner.onClipDoubleClicked (clip);
+        }
     }
 
     void mouseMove (const juce::MouseEvent& event) override { updateCursor (timelinePoint (event)); }
@@ -334,6 +374,12 @@ public:
     }
 
 private:
+    /** Audio: offset in seconds; MIDI: offset in content beats. */
+    static double contentOffset (const juce::ValueTree& clip)
+    {
+        return Project::isMidiClip (clip) ? Project::getClipOffsetBeats (clip) : Project::getClipOffset (clip);
+    }
+
     enum class DragMode { move, trimStart, trimEnd };
     struct Preview
     {
@@ -396,6 +442,20 @@ private:
     ClipDrawInfo drawInfo (const juce::ValueTree& clip, const juce::ValueTree& track,
                            double offset, double length) const
     {
+        if (Project::isMidiClip (clip))
+        {
+            ClipDrawInfo info;
+            info.name = Project::getClipName (clip);
+            info.colour = Project::getTrackColour (track);
+            info.looping = Project::isClipLooping (clip);
+            info.selected = clip == selected;
+            info.midiClip = clip;
+            info.offsetBeats = offset;
+            info.lengthBeats = length;
+            info.loopLengthBeats = Project::getClipLoopLength (clip);
+            return info;
+        }
+
         auto sample = owner.project.getClipSample (clip);
         const auto missing = sample == nullptr && ! owner.project.getSamplePool().isLoading (Project::getClipFile (clip));
 
@@ -429,11 +489,31 @@ private:
                 drag.start = juce::jmax (0.0, snap (drag.originalStart + delta));
                 const auto row = juce::jlimit (0, project.getNumTracks() - 1,
                                                (int) std::floor (event.position.y / (float) laneHeight));
-                drag.track = project.getTrack (row);
+                // Clips only move between tracks of the same kind (audio <-> audio, MIDI <-> MIDI).
+                if (const auto target = project.getTrack (row); Project::isMidiTrack (target) == Project::isMidiClip (drag.clip))
+                    drag.track = target;
                 break;
             }
             case DragMode::trimStart:
             {
+                if (Project::isMidiClip (drag.clip))
+                {
+                    const auto originalOffset = Project::getClipOffsetBeats (drag.clip);
+                    const auto loopLength = Project::getClipLoopLength (drag.clip);
+                    const auto looping = Project::isClipLooping (drag.clip) && loopLength > 0.0;
+                    const auto earliest = looping ? 0.0 : juce::jmax (0.0, drag.originalStart - originalOffset);
+                    drag.start = juce::jlimit (earliest, end - Project::minClipLengthBeats, snap (drag.originalStart + delta));
+                    drag.length = end - drag.start;
+                    drag.offset = originalOffset + (drag.start - drag.originalStart);
+                    if (looping)
+                    {
+                        drag.offset = std::fmod (drag.offset, loopLength);
+                        if (drag.offset < 0.0)
+                            drag.offset += loopLength;
+                    }
+                    break;
+                }
+
                 const auto originalOffset = Project::getClipOffset (drag.clip);
                 const auto earliest = Project::isClipLooping (drag.clip) ? 0.0
                     : juce::jmax (0.0, drag.originalStart - project.secondsToBeats (originalOffset));
@@ -460,7 +540,7 @@ private:
             case DragMode::trimEnd:
             {
                 auto latest = std::numeric_limits<double>::max();
-                if (! Project::isClipLooping (drag.clip))
+                if (! Project::isClipLooping (drag.clip) && ! Project::isMidiClip (drag.clip))
                     if (const auto sample = project.getClipSample (drag.clip))
                         latest = drag.originalStart + project.secondsToBeats (sample->getLengthSeconds() - drag.offset);
                 const auto earliest = drag.originalStart + Project::minClipLengthBeats;
@@ -633,7 +713,7 @@ void ArrangementView::filesDropped (const juce::StringArray& files, int x, int y
         return;
 
     const auto row = point.y / laneHeight;
-    if (row >= project.getNumTracks())
+    if (row >= project.getNumTracks() || Project::isMidiTrack (project.getTrack (row)))
     {
         const auto oldCount = project.getNumTracks();
         if (onAddTrackRequested)

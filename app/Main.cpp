@@ -20,10 +20,14 @@ public:
         // offscreen and exits (for visual checks). Audio file i is placed on track i, staggered
         // by one bar; a project file is opened instead (its samples decoded synchronously).
         auto args = juce::StringArray::fromTokens (commandLine, true);
-        // `--dialog export` snapshots the Export Audio panel instead of the main window.
-        const auto showExportDialog = args.contains ("--dialog");
+        // `--dialog export|pianoroll|synth` snapshots that panel instead of the main window:
+        // the Export Audio dialog, or the detail view showing the first MIDI clip / MIDI track.
+        juce::String dialogName;
         if (const auto d = args.indexOf ("--dialog"); d >= 0)
+        {
+            dialogName = args[d + 1];
             args.removeRange (d, 2);
+        }
 
         // `diyDaw --export out.wav project.diydaw` bounces the whole project (24 bit, 44.1 kHz).
         if (const auto i = args.indexOf ("--export"); i >= 0 && i + 2 < args.size())
@@ -70,8 +74,32 @@ public:
             ui.loadFilesSynchronously (audioFiles, 4.0);
 
             std::unique_ptr<juce::Component> dialog;
-            if (showExportDialog)
+            if (dialogName == "export")
                 dialog = std::make_unique<ExportDialog> (ui.getProject(), 44100.0);
+            else if (dialogName == "pianoroll" || dialogName == "synth")
+            {
+                auto detail = std::make_unique<DetailView> (ui.getProject());
+                detail->setBounds (ui.getLocalBounds());
+
+                for (const auto& track : ui.getProject().getState())
+                {
+                    if (! Project::isMidiTrack (track))
+                        continue;
+
+                    detail->showTrack (track);
+                    for (const auto& clip : track)
+                        if (Project::isMidiClip (clip))
+                        {
+                            detail->showClip (clip);
+                            break;
+                        }
+                    break;
+                }
+
+                detail->setTab (dialogName == "synth" ? DetailView::Tab::device : DetailView::Tab::clip);
+                detail->refresh();
+                dialog = std::move (detail);
+            }
 
             auto& target = dialog != nullptr ? *dialog : static_cast<juce::Component&> (ui);
             const auto image = target.createComponentSnapshot (target.getLocalBounds());

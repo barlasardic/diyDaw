@@ -2,6 +2,7 @@
 
 #include "ArrangementView.h"
 #include "DawLookAndFeel.h"
+#include "DetailView.h"
 #include "ExportDialog.h"
 #include "Engine.h"
 #include "Project.h"
@@ -11,6 +12,8 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 
+#include <atomic>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -22,6 +25,7 @@ namespace daw
 class MainComponent : public juce::Component,
                       private juce::AudioIODeviceCallback,
                       private juce::ValueTree::Listener,
+                      private juce::MidiInputCallback,
                       private juce::Timer
 {
 public:
@@ -31,6 +35,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
+    bool keyStateChanged (bool isKeyDown) override;
 
     /** Decodes files on this thread and places file i on track i at beat i * beatSpacing.
         For the --snapshot tooling; the UI path is the asynchronous drop in ArrangementView. */
@@ -66,6 +71,15 @@ private:
     void timerCallback() override;
 
     void addTrack();
+    void addMidiTrack();
+
+    /** The track that receives live notes (computer keyboard, MIDI input, piano roll preview):
+        the selected track, if it is a MIDI track. */
+    void selectTrack (juce::ValueTree track);
+    void playLiveNote (int pitch, float velocity, bool isNoteOn);
+    void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage&) override; // MIDI thread
+    void enableMidiInputs();
+    bool handleComputerKeyboard (const juce::KeyPress&);
     void showAudioSettings();
     void showFileMenu();
     void setShowingMixer (bool shouldShowMixer);
@@ -95,6 +109,17 @@ private:
 
     TransportBar transportBar { project };
     ArrangementView arrangement { project };
+    DetailView detail { project };
+
+    // Live input routing. liveTrackIndex is the engine slot of the selected MIDI track (-1 = none),
+    // read by the MIDI input thread.
+    juce::ValueTree selectedTrack;
+    std::atomic<int> liveTrackIndex { -1 };
+
+    // Computer MIDI keyboard (Ableton layout: A W S E D F T G Y H U J K = C..C, Z/X octave, C/V velocity).
+    int keyboardOctave = 3;            // C3 = 60
+    float keyboardVelocity = 0.8f;
+    std::map<int, int> heldKeys;       // key code -> sounding pitch
 
     // Mixer view
     juce::Component mixer;

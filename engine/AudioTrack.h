@@ -3,19 +3,28 @@
 #include "Clip.h"
 #include "PeakMeter.h"
 #include "RealtimeSwap.h"
+#include "Synth.h"
 #include "Transport.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include <array>
 #include <atomic>
+#include <mutex>
 
 namespace daw
 {
 
-/** One mixer channel that plays audio clips from the timeline.
+/** One mixer channel that plays clips from the timeline.
 
     The clip layout arrives as an immutable ClipList snapshot (built by the model on the
     message thread). Overlapping clips are summed; the model normally prevents overlaps.
+
+    Audio clips are rendered directly. When the instrument is enabled (a MIDI track), MIDI
+    clips are turned into sample-accurate note events for the track's Synth, together with
+    live notes pushed from a keyboard. Sequenced notes are always ended by the track itself
+    (it remembers each sounding note's end), so editing, stopping or jumping never leaves a
+    note hanging.
 
     Threading: parameter setters/getters and setClips() are message-thread;
     prepare()/process() are audio-thread. Shared state is atomic or handed over
@@ -55,14 +64,28 @@ public:
 
     PeakMeter& getMeter() noexcept { return meter; }
 
+    /** MIDI track: render MIDI clips and live notes through the synth. */
+    void setInstrumentEnabled (bool shouldBeEnabled) noexcept { instrumentEnabled.store (shouldBeEnabled); }
+    bool isInstrumentEnabled() const noexcept { return instrumentEnabled.load(); }
+    Synth& getSynth() noexcept { return synth; }
+
+    /** Live note from a MIDI keyboard or the computer keyboard; plays at the start of the next
+        block. Any non-audio thread (several producers are fine). Drops notes if the queue is full. */
+    void pushLiveNote (int pitch, float velocity, bool isNoteOn);
+
     // ---- audio thread -----------------------------------------------------
     void prepare (double sampleRate, int maxBlockSize);
 
     /** Renders this track and *adds* it into 'mixBus' (stereo). */
     void process (juce::AudioBuffer<float>& mixBus, const Transport::Block& block, bool anyTrackSoloed) noexcept;
 
+    static constexpr int maxEventsPerBlock = 512;
+
 private:
     void renderClip (const Clip& clip, const Transport::Block& block, int numSamples) noexcept;
+    void renderInstrument (const ClipList* list, const Transport::Block& block, int numSamples) noexcept;
+    void collectMidiClip (const Clip& clip, const Transport::Block& block, int numSamples) noexcept;
+    void addEvent (int offset, int pitch, float velocity, bool isNoteOn) noexcept;
 
     juce::String name { "Audio" };
 
@@ -72,7 +95,21 @@ private:
     RealtimeSwap<ClipList> clips;
     PeakMeter meter;
 
+    std::atomic<bool> instrumentEnabled { false };
+    Synth synth;
+
+    // Live notes: producers serialise on liveMutex; the audio thread reads lock-free.
+    static constexpr int liveQueueSize = 256;
+    std::mutex liveMutex;
+    juce::AbstractFifo liveFifo { liveQueueSize };
+    std::array<NoteEvent, liveQueueSize> liveQueue;
+
     // audio thread only
+    std::array<NoteEvent, maxEventsPerBlock> events;
+    int numEvents = 0;
+    std::array<double, 128> noteEndBeat;   // end of each sounding sequenced note; < 0 = not sounding
+    std::array<int, 128> noteOnIndex;      // sample index of this block's note-on per pitch, or -1
+    double expectedStartBeat = 0.0;        // NaN when the next block can't be a continuation
     juce::AudioBuffer<float> scratch;
     juce::SmoothedValue<float> leftGain, rightGain;
 };

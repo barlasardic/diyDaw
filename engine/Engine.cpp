@@ -35,6 +35,7 @@ void Engine::resetTracks()
         t->setPan (0.0f);
         t->setMute (false);
         t->setSolo (false);
+        t->setInstrumentEnabled (false);
         t->setName ("Audio");
     }
 }

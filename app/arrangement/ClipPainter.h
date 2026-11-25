@@ -9,7 +9,7 @@
 namespace daw
 {
 
-/** Everything needed to draw one audio clip. */
+/** Everything needed to draw one clip (audio: waveform; MIDI: note overview). */
 struct ClipDrawInfo
 {
     juce::String name;
@@ -20,6 +20,13 @@ struct ClipDrawInfo
     bool looping = false;                       // audio wraps to the sample start when it runs out
     bool selected = false;
     bool missing = false;                       // sample == nullptr because the file couldn't be loaded
+
+    // MIDI clips: the CLIP tree (with NOTE children), content offset, the clip's length in
+    // beats and its loop length (content wraps when 'looping').
+    juce::ValueTree midiClip {};
+    double offsetBeats = 0.0;
+    double lengthBeats = 0.0;
+    double loopLengthBeats = 0.0;
 };
 
 /** Ableton-style clip: a title bar in the track colour with the clip name, and a body

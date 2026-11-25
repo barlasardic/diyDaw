@@ -87,8 +87,14 @@ TransportBar::TransportBar (Project& p) : project (p), engine (p.getEngine())
     addAndMakeVisible (positionLabel);
 
     addTrackButton.setMouseClickGrabsKeyboardFocus (false);
+    addTrackButton.setTooltip ("New audio track (Ctrl+T)");
     addTrackButton.onClick = [this] { if (onAddTrack) onAddTrack(); };
     addAndMakeVisible (addTrackButton);
+
+    addMidiTrackButton.setMouseClickGrabsKeyboardFocus (false);
+    addMidiTrackButton.setTooltip ("New MIDI track with a synth (Ctrl+Shift+T)");
+    addMidiTrackButton.onClick = [this] { if (onAddMidiTrack) onAddMidiTrack(); };
+    addAndMakeVisible (addMidiTrackButton);
 
     viewButton.setMouseClickGrabsKeyboardFocus (false);
     viewButton.setTooltip ("Switch between arrangement and mixer (Tab)");
@@ -151,7 +157,9 @@ void TransportBar::resized()
 
     settingsButton.setBounds (area.removeFromRight (80).reduced (0, 2));
     area.removeFromRight (6);
-    addTrackButton.setBounds (area.removeFromRight (80).reduced (0, 2));
+    addMidiTrackButton.setBounds (area.removeFromRight (70).reduced (0, 2));
+    area.removeFromRight (6);
+    addTrackButton.setBounds (area.removeFromRight (70).reduced (0, 2));
     area.removeFromRight (6);
     viewButton.setBounds (area.removeFromRight (100).reduced (0, 2));
 

@@ -39,6 +39,86 @@ namespace
     }
 }
 
+namespace
+{
+    /** Ableton-style MIDI clip overview: notes as small bars, pitch range fitted to the body. */
+    void paintNotes (juce::Graphics& g, juce::Rectangle<float> body, const ClipDrawInfo& info)
+    {
+        const auto& clip = info.midiClip;
+        int lowest = 128, highest = -1;
+
+        for (const auto& note : clip)
+        {
+            const auto p = (int) note.getProperty ("pitch");
+            lowest = juce::jmin (lowest, p);
+            highest = juce::jmax (highest, p);
+        }
+
+        if (highest < 0 || info.lengthBeats <= 0.0)
+            return;
+
+        // At least an octave of range so a single note isn't a full-height block.
+        const auto centre = (lowest + highest) / 2;
+        lowest = juce::jmin (lowest, centre - 6);
+        highest = juce::jmax (highest, centre + 6);
+
+        const auto area = body.reduced (0.0f, 3.0f);
+        const auto rowHeight = area.getHeight() / (float) (highest - lowest + 1);
+        const auto noteHeight = juce::jlimit (1.0f, 6.0f, rowHeight - (rowHeight > 3.0f ? 1.0f : 0.0f));
+        const auto pxPerBeat = body.getWidth() / (float) info.lengthBeats;
+        const auto loop = info.looping && info.loopLengthBeats > 0.0;
+        const auto visible = g.getClipBounds().toFloat().getIntersection (body);
+
+        g.setColour (info.colour.brighter (0.35f));
+
+        // Content beat c appears at timeline beat (c - offset) + k * loopLength.
+        const auto firstCycle = loop ? std::floor (info.offsetBeats / info.loopLengthBeats) : 0.0;
+        const auto lastCycle = loop ? std::floor ((info.offsetBeats + info.lengthBeats) / info.loopLengthBeats) : 0.0;
+
+        for (auto k = firstCycle; k <= lastCycle; k += 1.0)
+        {
+            const auto cycleStart = loop ? k * info.loopLengthBeats : 0.0;
+
+            for (const auto& note : clip)
+            {
+                const auto start = (double) note.getProperty ("start");
+                auto length = (double) note.getProperty ("length");
+                if (loop)
+                {
+                    if (start >= info.loopLengthBeats)
+                        continue;
+                    length = juce::jmin (length, info.loopLengthBeats - start);
+                }
+
+                const auto t0 = juce::jmax (0.0, cycleStart + start - info.offsetBeats);
+                const auto t1 = juce::jmin (info.lengthBeats, cycleStart + start + length - info.offsetBeats);
+                if (t1 <= t0)
+                    continue;
+
+                const auto x0 = body.getX() + (float) t0 * pxPerBeat;
+                const auto w = juce::jmax (1.0f, (float) (t1 - t0) * pxPerBeat - 1.0f);
+                if (x0 > visible.getRight() || x0 + w < visible.getX())
+                    continue;
+
+                const auto row = highest - (int) note.getProperty ("pitch");
+                g.fillRect (x0, area.getY() + (float) row * rowHeight + (rowHeight - noteHeight) * 0.5f, w, noteHeight);
+            }
+        }
+
+        // Loop boundaries as faint lines.
+        if (loop)
+        {
+            g.setColour (juce::Colours::white.withAlpha (0.18f));
+            for (auto k = firstCycle + 1.0; k <= lastCycle; k += 1.0)
+            {
+                const auto x = body.getX() + (float) ((k * info.loopLengthBeats - info.offsetBeats) * pxPerBeat);
+                if (x > body.getX() && x < body.getRight())
+                    g.fillRect (x, body.getY(), 1.0f, body.getHeight());
+            }
+        }
+    }
+}
+
 void paintClip (juce::Graphics& g, juce::Rectangle<float> bounds, const ClipDrawInfo& info)
 {
     if (bounds.getWidth() <= 0.0f || bounds.getHeight() <= 0.0f)
@@ -69,7 +149,11 @@ void paintClip (juce::Graphics& g, juce::Rectangle<float> bounds, const ClipDraw
     {
         const auto* sample = info.sample.get();
 
-        if (sample == nullptr)
+        if (info.midiClip.isValid())
+        {
+            paintNotes (g, body, info);
+        }
+        else if (sample == nullptr)
         {
             const auto loadingArea = body.reduced (4.0f, 0.0f);
 
