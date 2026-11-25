@@ -280,6 +280,20 @@ juce::String Project::replaceContents (const juce::ValueTree& newState)
         state.appendChild (track, nullptr);
     }
 
+    // The MASTER (master insert effects) is always the last child.
+    {
+        auto master = newState.getChildWithName (ids::MASTER).createCopy();
+        if (! master.isValid())
+            master = juce::ValueTree (ids::MASTER);
+
+        for (int i = master.getNumChildren(); --i >= 0;)
+            if (const auto child = master.getChild (i); ! isEffect (child) || ! getEffectTypes().contains (getDeviceType (child)))
+                master.removeChild (i, nullptr);
+
+        normaliseTypes (master);
+        state.appendChild (master, nullptr);
+    }
+
     // Every DEVICE needs a unique uid (automation refers to it); repair missing / duplicate ones.
     {
         juce::Array<int> used;
@@ -310,6 +324,8 @@ juce::String Project::replaceContents (const juce::ValueTree& newState)
             for (const auto& track : state)
                 syncAutomation (track);
     }
+
+    syncEffects (getMaster());
 
     undoManager.clearUndoHistory();
     unsavedChanges = false;
@@ -440,6 +456,37 @@ void Project::syncProjectProperties()
 
 // ---- tracks -----------------------------------------------------------------
 
+int Project::getNumTracks() const
+{
+    auto n = 0;
+    for (const auto& child : state)
+        n += child.hasType (ids::TRACK) ? 1 : 0;
+    return n;
+}
+
+juce::ValueTree Project::getTrack (int index) const
+{
+    for (const auto& child : state)
+        if (child.hasType (ids::TRACK) && index-- == 0)
+            return child;
+    return {};
+}
+
+int Project::indexOfTrack (const juce::ValueTree& track) const
+{
+    if (! track.hasType (ids::TRACK))
+        return -1;
+
+    auto index = 0;
+    for (const auto& child : state)
+    {
+        if (child == track)
+            return index;
+        index += child.hasType (ids::TRACK) ? 1 : 0;
+    }
+    return -1;
+}
+
 juce::ValueTree Project::addTrack (const juce::String& name, TrackKind trackKind)
 {
     const auto index = engine.addTrack();
@@ -454,7 +501,7 @@ juce::ValueTree Project::addTrack (const juce::String& name, TrackKind trackKind
         track.setProperty (ids::name, name, nullptr);
 
     track.setProperty (ids::engineIndex, index, nullptr);
-    state.appendChild (track, nullptr);
+    state.addChild (track, state.indexOf (getMaster()), nullptr); // tracks stay before MASTER
     return track;
 }
 
@@ -568,7 +615,7 @@ juce::Array<juce::ValueTree> Project::getEffects (const juce::ValueTree& track) 
 
 juce::ValueTree Project::addEffect (juce::ValueTree track, const juce::String& effectType, int index)
 {
-    if (! track.hasType (ids::TRACK) || ! getEffectTypes().contains (effectType))
+    if (! (track.hasType (ids::TRACK) || isMaster (track)) || ! getEffectTypes().contains (effectType))
         return {};
 
     juce::ValueTree device (ids::DEVICE);
@@ -640,7 +687,7 @@ std::shared_ptr<AudioEffect> Project::getEffectInstance (const juce::ValueTree& 
 
 void Project::syncEffects (const juce::ValueTree& track)
 {
-    if (! track.hasType (ids::TRACK))
+    if (! track.hasType (ids::TRACK) && ! isMaster (track))
         return;
 
     auto chain = std::make_unique<EffectChain>();
@@ -667,8 +714,13 @@ void Project::syncEffects (const juce::ValueTree& track)
         chain->effects.push_back (std::move (instance));
     }
 
-    getEngineTrack (track).setEffects (std::move (chain));
-    syncAutomation (track);
+    if (isMaster (track))
+        engine.setMasterEffects (std::move (chain));
+    else
+    {
+        getEngineTrack (track).setEffects (std::move (chain));
+        syncAutomation (track);
+    }
 
     // Forget instances whose DEVICE is no longer in the project (an undo that brings one back
     // gets a fresh instance). The engine keeps its own references until it's done with them.
@@ -676,6 +728,8 @@ void Project::syncEffects (const juce::ValueTree& track)
                                            [this] (const auto& entry)
                                            {
                                                const auto parent = entry.first.getParent();
+                                               if (isMaster (parent))
+                                                   return parent != getMaster();
                                                return ! parent.isValid() || indexOfTrack (parent) < 0;
                                            }),
                            effectInstances.end());
@@ -1379,7 +1433,7 @@ void Project::valueTreePropertyChanged (juce::ValueTree& tree, const juce::Ident
     else if (tree.hasType (ids::DEVICE))
     {
         const auto track = tree.getParent();
-        if (! track.hasType (ids::TRACK))
+        if (! track.hasType (ids::TRACK) && ! isMaster (track))
             return;
 
         const auto& infos = getDeviceParamInfos (tree);
@@ -1440,6 +1494,8 @@ void Project::valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree& chi
         syncAutomation (parent.getParent());
     else if (parent.hasType (ids::CLIP))
         syncTrack (parent.getParent());
+    else if (isMaster (parent))
+        syncEffects (parent);
     else if (child.hasType (ids::TRACK))
     {
         syncTrack (child);
@@ -1452,7 +1508,7 @@ void Project::valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree& c
 {
     unsavedChanges = true;
 
-    if (parent.hasType (ids::TRACK) && child.hasType (ids::DEVICE))
+    if ((parent.hasType (ids::TRACK) || isMaster (parent)) && child.hasType (ids::DEVICE))
         syncEffects (parent);
     else if (parent.hasType (ids::TRACK) && child.hasType (ids::AUTOMATION))
         syncAutomation (parent);
@@ -1466,7 +1522,7 @@ void Project::valueTreeChildOrderChanged (juce::ValueTree& parent, int, int)
 {
     unsavedChanges = true;
 
-    if (parent.hasType (ids::TRACK))
+    if (parent.hasType (ids::TRACK) || isMaster (parent))
         syncEffects (parent);
 }
 

@@ -58,29 +58,74 @@ bool ProjectRenderer::renderBlocks (Progress& progress, double progressScale, do
 
     juce::AudioBuffer<float> block (2, blockSize);
 
-    for (int64_t pos = 0; pos < lengthInSamples; pos += blockSize)
-    {
-        const auto n = (int) juce::jmin ((int64_t) blockSize, lengthInSamples - pos);
-        engine.render (block, n);
-        consume (block, pos, n);
+    // Fixed tail length, or the auto-tail limit (it may end earlier at silence).
+    const auto total = lengthInSamples + getMaxTailSamples();
+    const auto silenceGain = juce::Decibels::decibelsToGain (ExportSettings::silenceThresholdDb);
+    const auto silenceNeeded = (int64_t) (0.25 * settings.sampleRate);
+    int64_t silentFor = 0;
 
-        if (progress && ! progress (progressOffset + progressScale * (double) (pos + n) / (double) lengthInSamples))
+    auto reportedEnd = false;
+
+    for (int64_t pos = 0, n = 0; pos < total; pos += n)
+    {
+        // At the end of the range: stop, so notes end and clips stop, and let effects ring out.
+        if (pos == lengthInSamples)
+            engine.getTransport().stop();
+
+        n = juce::jmin ((int64_t) blockSize, total - pos);
+        if (pos < lengthInSamples)
+            n = juce::jmin (n, lengthInSamples - pos); // the stop lands on the exact sample
+
+        const auto numSamples = (int) n;
+        engine.render (block, numSamples);
+
+        if (settings.autoTail && pos >= lengthInSamples)
+        {
+            const auto peak = juce::jmax (block.getMagnitude (0, 0, numSamples), block.getMagnitude (1, 0, numSamples));
+            silentFor = peak < silenceGain ? silentFor + n : 0;
+        }
+
+        consume (block, pos, numSamples);
+
+        const auto fraction = juce::jmin (1.0, (double) (pos + n) / (double) total);
+        reportedEnd = fraction >= 1.0;
+
+        if (progress && ! progress (progressOffset + progressScale * fraction))
             return false;
+
+        if (settings.autoTail && silentFor >= silenceNeeded)
+            break;
     }
+
+    if (progress && ! reportedEnd) // e.g. the auto tail ended early
+        progress (progressOffset + progressScale);
 
     return true;
 }
 
+int64_t ProjectRenderer::getMaxTailSamples() const noexcept
+{
+    const auto seconds = settings.autoTail ? ExportSettings::maxAutoTailSeconds : juce::jmax (0.0, settings.tailSeconds);
+    return (int64_t) std::llround (seconds * settings.sampleRate);
+}
+
 juce::AudioBuffer<float> ProjectRenderer::render (Progress progress)
 {
-    juce::AudioBuffer<float> result (2, (int) lengthInSamples);
+    // Sized for the longest possible tail once, trimmed to what was rendered at the end.
+    juce::AudioBuffer<float> result (2, (int) (lengthInSamples + getMaxTailSamples()));
     result.clear();
+    int64_t rendered = 0;
 
-    renderBlocks (progress, 1.0, 0.0, [&result] (const juce::AudioBuffer<float>& block, int64_t pos, int n)
+    renderBlocks (progress, 1.0, 0.0, [&result, &rendered] (const juce::AudioBuffer<float>& block, int64_t pos, int n)
     {
         for (int ch = 0; ch < 2; ++ch)
             result.copyFrom (ch, (int) pos, block, ch, 0, n);
+
+        rendered = pos + n;
     });
+
+    if (rendered < result.getNumSamples())
+        result.setSize (2, (int) juce::jmax (rendered, lengthInSamples), true, false, true);
 
     return result;
 }

@@ -16,6 +16,15 @@ struct ExportSettings
     int bitDepth = 24;             // 16 or 24 (PCM, 16 is TPDF-dithered) or 32 (float)
     bool normalise = false;        // scale so the loudest sample peaks at -0.3 dBFS
     bool includeMetronome = false;
+
+    /** Effect tail after the range: the transport stops at endBeat (notes end, clips stop) and
+        the engine keeps rendering so reverbs / delays ring out. Fixed length, or 'autoTail':
+        until the output stays below silenceThresholdDb for 250 ms (at most maxAutoTailSeconds). */
+    double tailSeconds = 0.0;
+    bool autoTail = false;
+
+    static constexpr double maxAutoTailSeconds = 10.0;
+    static constexpr float silenceThresholdDb = -90.0f;
 };
 
 /** Offline "bounce" of a project, independent of the live engine and audio device.
@@ -34,9 +43,10 @@ public:
     ProjectRenderer (Project& source, const ExportSettings& settings);
     ~ProjectRenderer();
 
+    /** Samples in the range itself (without the tail). */
     int64_t getLengthInSamples() const noexcept { return lengthInSamples; }
 
-    /** Renders the whole range into memory (stereo, float, no normalising or dither). */
+    /** Renders the whole range plus the tail into memory (stereo, float, no normalising or dither). */
     juce::AudioBuffer<float> render (Progress progress = {});
 
     /** Renders and writes a stereo WAV file. Writes to a temporary file first, so a failed
@@ -49,6 +59,9 @@ public:
     static constexpr float normaliseTargetDb = -0.3f;
 
 private:
+    /** The longest the tail can be (fixed length, or the auto-tail limit). */
+    int64_t getMaxTailSamples() const noexcept;
+
     /** Restarts the private engine at the start of the range. */
     void rewind();
 

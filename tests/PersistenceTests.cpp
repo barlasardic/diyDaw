@@ -628,8 +628,10 @@ struct PersistenceTests : juce::UnitTest
         expectEquals (f.engine.getTransport().getBeatsPerBar(), 7);
         expectMixer (f, f.project.getTrack (0), 0.0f, 0.0f, false, false);
         expectMixer (f, f.project.getTrack (1), -9.5f, 0.25f, true, true);
-        for (const auto track : state)
+        expect (state.getChildWithName (daw::ids::MASTER).isValid());
+        for (int t = 0; t < f.project.getNumTracks(); ++t)
         {
+            const auto track = f.project.getTrack (t);
             expect (track[daw::ids::engineIndex].isInt());
             expect (track[daw::ids::gain].isDouble());
             expect (track[daw::ids::pan].isDouble());

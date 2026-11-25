@@ -50,6 +50,12 @@ their per-track components from ValueTree child-added/removed callbacks.
   roll on its own (loop = clip range, isolated track). `SongPositionBar` under the transport bar
   shows and scrubs the song (or pattern) position; the piano roll ruler also seeks.
 
+## Master and export
+- `MASTER` (last child of PROJECT) holds master insert effects; the effect API takes it in place
+  of a track. Never iterate PROJECT children as tracks: use getNumTracks()/getTrack().
+- Export tails (`ExportSettings::tailSeconds` / `autoTail`): the transport stops at the range end
+  and the engine keeps rendering so effects ring out.
+
 ## Automation
 - `AUTOMATION { target }` lanes with `POINT { beat, value }` on a track; targets are "gain",
   "pan" or "<device uid>:<param id>" (`Project::getAutomationTargets`). Every DEVICE has a

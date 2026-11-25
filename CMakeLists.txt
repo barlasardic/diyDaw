@@ -63,7 +63,8 @@ if(DAW_BUILD_TESTS)
         tests/EffectsTests.cpp
         tests/DeviceChainTests.cpp
         tests/LiveNoteTests.cpp
-        tests/AutomationTests.cpp)
+        tests/AutomationTests.cpp
+        tests/MasterTailTests.cpp)
     target_compile_definitions(DawEngineTests PRIVATE ${DAW_COMMON_DEFINITIONS})
     target_link_libraries(DawEngineTests PRIVATE
         daw_model

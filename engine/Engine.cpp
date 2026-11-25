@@ -27,6 +27,7 @@ int Engine::addTrack()
 void Engine::resetTracks()
 {
     numTracks.store (0);
+    masterEffects.publish (std::make_unique<EffectChain>());
 
     for (auto& t : tracks)
     {
@@ -46,6 +47,8 @@ void Engine::collectGarbage()
 {
     for (auto& t : tracks)
         t->collectGarbage();
+
+    masterEffects.collectGarbage();
 }
 
 void Engine::prepare (double newSampleRate, int maxBlockSize)
@@ -59,6 +62,10 @@ void Engine::prepare (double newSampleRate, int maxBlockSize)
 
     for (auto& t : tracks)
         t->prepare (sampleRate, maxBlockSize);
+
+    if (auto* chain = masterEffects.acquire()) // audio is stopped while preparing
+        for (auto& e : chain->effects)
+            e->prepare (sampleRate, maxBlockSize);
 
     masterGain.reset (sampleRate, 0.02);
     masterGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (masterGainDb.load()));
@@ -97,6 +104,10 @@ void Engine::renderBlock (juce::AudioBuffer<float>& out, int startSample, const 
     for (int i = 0; i < activeTracks; ++i)
         if (isolated < 0 || isolated == i)
             tracks[(size_t) i]->process (bus, block, anySolo && isolated < 0);
+
+    if (auto* chain = masterEffects.acquire())
+        for (auto& e : chain->effects)
+            e->process (bus, numSamples, block);
 
     const auto db = masterGainDb.load (std::memory_order_relaxed);
     masterGain.setTargetValue (db <= AudioTrack::minGainDb ? 0.0f : juce::Decibels::decibelsToGain (db));

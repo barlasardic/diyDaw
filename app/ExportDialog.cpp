@@ -32,7 +32,7 @@ ExportDialog::ExportDialog (Project& p, double defaultSampleRate) : project (p)
     const auto endBeat = ProjectRenderer::getProjectEndBeat (project);
     const auto bars = juce::jmax (1.0, std::ceil (endBeat / beatsPerBar - 1.0e-9));
 
-    for (auto* l : { &startLabel, &lengthLabel, &rateLabel, &depthLabel })
+    for (auto* l : { &startLabel, &lengthLabel, &rateLabel, &depthLabel, &tailLabel })
     {
         styleLabel (*l);
         addAndMakeVisible (*l);
@@ -61,6 +61,17 @@ ExportDialog::ExportDialog (Project& p, double defaultSampleRate) : project (p)
     bitDepth.setSelectedId (2, juce::dontSendNotification);
     addAndMakeVisible (bitDepth);
 
+    // Reverb / delay tails after the end (the transport stops there and effects ring out).
+    tail.addItem ("Off", 1);
+    tail.addItem ("Auto (until silent)", 2);
+    tail.addItem ("1 s", 3);
+    tail.addItem ("2 s", 4);
+    tail.addItem ("4 s", 5);
+    tail.addItem ("8 s", 6);
+    tail.setSelectedId (2, juce::dontSendNotification);
+    tail.setTooltip ("Keep rendering after the end so reverb and delay can fade out");
+    addAndMakeVisible (tail);
+
     addAndMakeVisible (normalise);
     addAndMakeVisible (metronome);
 
@@ -74,7 +85,7 @@ ExportDialog::ExportDialog (Project& p, double defaultSampleRate) : project (p)
     addAndMakeVisible (cancelButton);
 
     updateSummary();
-    setSize (380, 290);
+    setSize (380, 326);
 }
 
 ExportSettings ExportDialog::makeSettings() const
@@ -87,6 +98,11 @@ ExportSettings ExportDialog::makeSettings() const
     s.sampleRate = sampleRates[juce::jlimit (0, (int) std::size (sampleRates) - 1, sampleRate.getSelectedId() - 1)];
     s.bitDepth = bitDepths[juce::jlimit (0, 2, bitDepth.getSelectedId() - 1)];
     s.normalise = normalise.getToggleState();
+
+    static const double fixedTails[] = { 0.0, 0.0, 1.0, 2.0, 4.0, 8.0 };
+    const auto tailIndex = juce::jlimit (0, 5, tail.getSelectedId() - 1);
+    s.autoTail = tailIndex == 1;
+    s.tailSeconds = fixedTails[tailIndex];
     s.includeMetronome = metronome.getToggleState();
     return s;
 }
@@ -142,6 +158,7 @@ void ExportDialog::resized()
     row (lengthLabel, lengthBars);
     row (rateLabel, sampleRate);
     row (depthLabel, bitDepth);
+    row (tailLabel, tail);
 
     normalise.setBounds (area.removeFromTop (24));
     metronome.setBounds (area.removeFromTop (24));

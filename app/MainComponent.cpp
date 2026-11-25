@@ -92,6 +92,9 @@ MainComponent::MainComponent()
     };
     addAndMakeVisible (detailDivider);
 
+    masterStrip.onSelected = [this] { detail.showMaster(); };
+    masterStrip.setTooltip ("Click to show the master effects");
+
     stripViewport.setViewedComponent (&stripHolder, false);
     stripViewport.setScrollBarsShown (false, true);
     mixer.addAndMakeVisible (stripViewport);
@@ -413,8 +416,9 @@ void MainComponent::syncStrips()
     // Keep strips whose track still exists, in model order; make strips for new tracks.
     std::vector<std::unique_ptr<TrackStrip>> updated;
 
-    for (const auto& track : project.getState())
+    for (int i = 0; i < project.getNumTracks(); ++i)
     {
+        const auto track = project.getTrack (i);
         auto existing = std::find_if (strips.begin(), strips.end(),
                                       [&track] (const auto& s) { return s != nullptr && s->getTrack() == track; });
 

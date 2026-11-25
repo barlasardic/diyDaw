@@ -14,6 +14,7 @@ namespace ids
     #define DAW_DECLARE_ID(name) inline const juce::Identifier name { #name };
     DAW_DECLARE_ID (PROJECT)
     DAW_DECLARE_ID (TRACK)
+    DAW_DECLARE_ID (MASTER)
     DAW_DECLARE_ID (CLIP)
     DAW_DECLARE_ID (NOTE)
     DAW_DECLARE_ID (DEVICE)
@@ -55,7 +56,7 @@ namespace ids
 /** The arrangement document: tracks and their audio clips, stored in a juce::ValueTree.
 
         PROJECT { version, bpm, beatsPerBar, masterGain }
-          TRACK { kind, name, colour, engineIndex, gain, pan, mute, solo }
+          TRACK { kind, name, colour, engineIndex, gain, pan, mute, solo, height }
             CLIP { kind="audio", name, file, start, length, offset (seconds), loop }
             CLIP { kind="midi", name, start, length, offsetBeats, loop, loopLength }
               NOTE { pitch, start, length, velocity }      (start: content beats)
@@ -63,6 +64,13 @@ namespace ids
             DEVICE { type="eq"|"compressor"|"reverb"|"delay", uid, enabled, <param id>=value ... }
             AUTOMATION { target }
               POINT { beat, value }
+
+          MASTER                                       (always the last child of PROJECT)
+            DEVICE { type="eq"|..., uid, enabled, ... }  (master insert effects)
+
+    The PROJECT's children are its TRACKs plus one MASTER: use getNumTracks() / getTrack() /
+    indexOfTrack(), which only count TRACKs. The MASTER works like a track for the effect API
+    (getEffects, addEffect, ... take it in place of a track); it has no clips or automation.
 
     A track's children are its CLIPs, its DEVICEs (the device chain, in order: the instrument
     on MIDI tracks, then insert effects) and its AUTOMATION lanes; use isClip() / isEffect() /
@@ -142,9 +150,13 @@ public:
         A MIDI track gets a synth DEVICE with default parameters. */
     juce::ValueTree addTrack (const juce::String& name = {}, TrackKind kind = TrackKind::audio);
     static bool isMidiTrack (const juce::ValueTree& track) { return track[ids::kind].toString() == "midi"; }
-    int getNumTracks() const { return state.getNumChildren(); }
-    juce::ValueTree getTrack (int index) const { return state.getChild (index); }
-    int indexOfTrack (const juce::ValueTree& track) const { return state.indexOf (track); }
+    int getNumTracks() const;
+    juce::ValueTree getTrack (int index) const;
+    int indexOfTrack (const juce::ValueTree& track) const;
+
+    /** The MASTER node (master insert effects; pass it where a track is expected for effects). */
+    juce::ValueTree getMaster() const { return state.getChildWithName (ids::MASTER); }
+    static bool isMaster (const juce::ValueTree& tree) { return tree.hasType (ids::MASTER); }
     AudioTrack& getEngineTrack (const juce::ValueTree& track);
     void setTrackName (juce::ValueTree track, const juce::String& newName);
     static juce::Colour getTrackColour (const juce::ValueTree& track);

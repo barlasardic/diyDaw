@@ -32,8 +32,8 @@ private:
 
     juce::Label startLabel { {}, "Start bar" }, lengthLabel { {}, "Length (bars)" };
     juce::Slider startBar, lengthBars;
-    juce::Label rateLabel { {}, "Sample rate" }, depthLabel { {}, "Bit depth" };
-    juce::ComboBox sampleRate, bitDepth;
+    juce::Label rateLabel { {}, "Sample rate" }, depthLabel { {}, "Bit depth" }, tailLabel { {}, "Effect tail" };
+    juce::ComboBox sampleRate, bitDepth, tail;
     juce::ToggleButton normalise { "Normalise to -0.3 dBFS" }, metronome { "Include metronome" };
     juce::Label summary;
     juce::TextButton exportButton { "Export..." }, cancelButton { "Cancel" };

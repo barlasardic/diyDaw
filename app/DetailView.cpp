@@ -17,6 +17,18 @@ DetailView::DetailView (Project& p) : project (p), pianoRoll (p), deviceChain (p
 
     clipTab.setTooltip ("Clip editor (Shift+Tab switches)");
     deviceTab.setTooltip ("Instrument of the track (Shift+Tab switches)");
+    masterButton.setMouseClickGrabsKeyboardFocus (false);
+    masterButton.setColour (juce::TextButton::buttonOnColourId, colours::accent);
+    masterButton.setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+    masterButton.setTooltip ("Master effects (applied to the whole mix, before the master fader)");
+    masterButton.onClick = [this]
+    {
+        showMaster();
+        if (onMasterShown)
+            onMasterShown();
+    };
+    addAndMakeVisible (masterButton);
+
     clipTab.onClick = [this] { setTab (Tab::clip); };
     deviceTab.onClick = [this] { setTab (Tab::device); };
 
@@ -55,6 +67,13 @@ void DetailView::showTrack (juce::ValueTree newTrack)
     updateVisibility();
 }
 
+void DetailView::showMaster()
+{
+    track = project.getMaster();
+    deviceChain.setTrack (track);
+    setTab (Tab::device);
+}
+
 void DetailView::setTab (Tab newTab)
 {
     tab = newTab;
@@ -70,7 +89,7 @@ void DetailView::updateVisibility()
         pianoRoll.setClip ({});
     }
 
-    if (track.isValid() && project.indexOfTrack (track) < 0)
+    if (track.isValid() && project.indexOfTrack (track) < 0 && track != project.getMaster())
     {
         track = {};
         deviceChain.setTrack ({});
@@ -78,6 +97,7 @@ void DetailView::updateVisibility()
 
     clipTab.setToggleState (tab == Tab::clip, juce::dontSendNotification);
     deviceTab.setToggleState (tab == Tab::device, juce::dontSendNotification);
+    masterButton.setToggleState (tab == Tab::device && Project::isMaster (track), juce::dontSendNotification);
     pianoRoll.setVisible (tab == Tab::clip && Project::isMidiClip (clip));
     deviceChain.setVisible (tab == Tab::device && track.isValid());
     repaint();
@@ -85,7 +105,8 @@ void DetailView::updateVisibility()
 
 void DetailView::refresh()
 {
-    if ((clip.isValid() && ! clip.getParent().isValid()) || (track.isValid() && project.indexOfTrack (track) < 0))
+    if ((clip.isValid() && ! clip.getParent().isValid())
+        || (track.isValid() && project.indexOfTrack (track) < 0 && track != project.getMaster()))
         updateVisibility();
 
     if (pianoRoll.isVisible())
@@ -106,7 +127,7 @@ void DetailView::paint (juce::Graphics& g)
     g.drawHorizontalLine (0, 0.0f, (float) getWidth());
     g.drawHorizontalLine (headerHeight - 1, 0.0f, (float) getWidth());
 
-    if (track.isValid())
+    if (track.isValid() && ! Project::isMaster (track))
     {
         g.setColour (Project::getTrackColour (track));
         g.fillRect (header.getX() + 140, header.getY() + 7, 12, 12);
@@ -115,6 +136,8 @@ void DetailView::paint (juce::Graphics& g)
     juce::String title;
     if (tab == Tab::clip && clip.isValid())
         title = Project::getClipName (clip) + "  -  " + track[ids::name].toString();
+    else if (Project::isMaster (track))
+        title = "Master  -  Devices";
     else if (track.isValid())
         title = track[ids::name].toString() + "  -  Devices";
 
@@ -147,6 +170,7 @@ void DetailView::resized()
     clipTab.setBounds (header.removeFromLeft (60));
     header.removeFromLeft (4);
     deviceTab.setBounds (header.removeFromLeft (64));
+    masterButton.setBounds (header.removeFromRight (70));
 
     pianoRoll.setBounds (area);
     deviceChain.setBounds (area);

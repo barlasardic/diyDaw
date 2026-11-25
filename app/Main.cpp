@@ -20,7 +20,7 @@ public:
         // offscreen and exits (for visual checks). Audio file i is placed on track i, staggered
         // by one bar; a project file is opened instead (its samples decoded synchronously).
         auto args = juce::StringArray::fromTokens (commandLine, true);
-        // `--dialog export|pianoroll|synth|devices` snapshots that panel instead of the main window:
+        // `--dialog export|pianoroll|synth|devices|master` snapshots that panel instead of the main window:
         // the Export Audio dialog, or the detail view showing the first MIDI clip / the first MIDI
         // track's device chain (synth and devices are the same view).
         juce::String dialogName;
@@ -41,6 +41,7 @@ public:
             {
                 ExportSettings settings;
                 settings.endBeat = ProjectRenderer::getProjectEndBeat (ui.getProject());
+                settings.autoTail = true;
                 ProjectRenderer renderer (ui.getProject(), settings);
                 result = renderer.renderToFile (cwd.getChildFile (args[i + 1].unquoted()));
             }
@@ -92,6 +93,14 @@ public:
             std::unique_ptr<juce::Component> dialog;
             if (dialogName == "export")
                 dialog = std::make_unique<ExportDialog> (ui.getProject(), 44100.0);
+            else if (dialogName == "master")
+            {
+                auto detail = std::make_unique<DetailView> (ui.getProject());
+                detail->setBounds (ui.getLocalBounds());
+                detail->showMaster();
+                detail->refresh();
+                dialog = std::move (detail);
+            }
             else if (dialogName == "pianoroll" || dialogName == "synth" || dialogName == "devices")
             {
                 auto detail = std::make_unique<DetailView> (ui.getProject());

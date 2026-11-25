@@ -7,6 +7,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <functional>
+
 
 namespace daw
 {
@@ -51,10 +53,15 @@ private:
 };
 
 /** Master channel: master fader + meter, same visual language as TrackStrip. */
-class MasterStrip : public juce::Component
+class MasterStrip : public juce::Component,
+                    public juce::SettableTooltipClient
 {
 public:
     explicit MasterStrip (Project& project);
+
+    /** Clicking the strip (outside the fader) shows the master's effects. */
+    std::function<void()> onSelected;
+    void mouseDown (const juce::MouseEvent&) override { if (onSelected) onSelected(); }
 
     void refresh();
 

@@ -25,6 +25,12 @@ public:
     /** Shows this track's device (without switching tabs). */
     void showTrack (juce::ValueTree track);
 
+    /** Shows the master's effect chain in the Device tab. */
+    void showMaster();
+
+    /** Called when the Master button is pressed (the owner may update its selection). */
+    std::function<void()> onMasterShown;
+
     enum class Tab { clip, device };
     void setTab (Tab);
     Tab getTab() const noexcept { return tab; }
@@ -54,7 +60,7 @@ private:
     juce::ValueTree track, clip;
     Tab tab = Tab::clip;
 
-    juce::TextButton clipTab { "Clip" }, deviceTab { "Device" };
+    juce::TextButton clipTab { "Clip" }, deviceTab { "Device" }, masterButton { "Master" };
     PianoRoll pianoRoll;
     DeviceChain deviceChain;
 

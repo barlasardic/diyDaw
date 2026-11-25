@@ -44,6 +44,10 @@ public:
     void resetTracks();
     AudioTrack& getTrack (int index) noexcept { return *tracks[(size_t) index]; }
 
+    /** Master insert effects: after the tracks are summed, before the master fader. Every
+        effect must already be prepared at the current sample rate. */
+    void setMasterEffects (std::unique_ptr<EffectChain> chain) { masterEffects.publish (std::move (chain)); }
+
     void setMasterGainDb (float db) noexcept { masterGainDb.store (juce::jlimit (AudioTrack::minGainDb, AudioTrack::maxGainDb, db)); }
     float getMasterGainDb() const noexcept   { return masterGainDb.load(); }
     PeakMeter& getMasterMeter() noexcept     { return masterMeter; }
@@ -77,6 +81,7 @@ private:
     std::atomic<int> numTracks { 0 };
 
     std::atomic<float> masterGainDb { 0.0f };
+    RealtimeSwap<EffectChain> masterEffects;
     std::atomic<int> isolatedTrack { -1 };
     std::atomic<double> preparedSampleRate { 44100.0 };
     std::atomic<int> preparedBlockSize { 512 };
