@@ -2,6 +2,7 @@
 
 #include "Project.h"
 #include "TimelineGeometry.h"
+#include "TrackHeader.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -20,6 +21,7 @@ public:
 
     static constexpr int preferredHeight = 56;
     void refresh();
+    void setHeaderWidth (int);
     void clearSelection();
     bool deleteSelectedPoint();
     bool cancelGesture();
@@ -74,6 +76,7 @@ private:
     juce::ComboBox selector;
     juce::TextButton clearButton { "x" };
     Gesture gesture;
+    int headerWidth = TrackHeader::preferredWidth;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AutomationLaneView)
 };

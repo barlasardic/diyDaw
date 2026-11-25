@@ -176,15 +176,25 @@ float AutomationLaneView::yToValue (float y) const
     return r.snapToLegalValue (r.convertFrom0to1 (normal));
 }
 
+void AutomationLaneView::setHeaderWidth (int width)
+{
+    width = juce::jlimit (TrackHeader::minWidth, TrackHeader::maxWidth, width);
+    if (headerWidth == width)
+        return;
+    headerWidth = width;
+    resized();
+    repaint();
+}
+
 void AutomationLaneView::resized()
 {
-    selector.setBounds (10, 18, TrackHeader::preferredWidth - 42, 22);
-    clearButton.setBounds (TrackHeader::preferredWidth - 27, 18, 19, 22);
+    selector.setBounds (10, 18, headerWidth - 42, 22);
+    clearButton.setBounds (headerWidth - 27, 18, 19, 22);
 }
 
 void AutomationLaneView::paint (juce::Graphics& g)
 {
-    const auto left = (float) TrackHeader::preferredWidth;
+    const auto left = (float) headerWidth;
     const auto width = juce::jmax (0.0f, (float) getWidth() - left);
     const auto colour = Project::getTrackColour (track);
     g.fillAll (colours::panel.darker (0.18f));
@@ -192,10 +202,10 @@ void AutomationLaneView::paint (juce::Graphics& g)
     g.fillRect (0, 0, 4, getHeight());
     g.setColour (colours::outline);
     g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
-    g.drawVerticalLine (TrackHeader::preferredWidth - 1, 0.0f, (float) getHeight());
+    g.drawVerticalLine (headerWidth - 1, 0.0f, (float) getHeight());
     g.saveState();
-    g.reduceClipRegion (TrackHeader::preferredWidth, 0, (int) width, getHeight() - 1);
-    g.setOrigin (TrackHeader::preferredWidth, 0);
+    g.reduceClipRegion (headerWidth, 0, (int) width, getHeight() - 1);
+    g.setOrigin (headerWidth, 0);
     g.setColour (colours::textDim.withAlpha (0.12f));
     for (const auto normal : { 0.0f, 0.5f, 1.0f })
         g.drawHorizontalLine ((int) (verticalPadding + normal * ((float) getHeight() - 2.0f * verticalPadding)), 0.0f, width);
@@ -291,7 +301,7 @@ void AutomationLaneView::paint (juce::Graphics& g)
 
 juce::ValueTree AutomationLaneView::pointAt (juce::Point<float> position) const
 {
-    position.x -= (float) TrackHeader::preferredWidth;
+    position.x -= (float) headerWidth;
     juce::ValueTree result;
     auto distance = 7.0f;
     for (const auto& point : points (false))
@@ -308,7 +318,7 @@ juce::ValueTree AutomationLaneView::pointAt (juce::Point<float> position) const
 
 void AutomationLaneView::mouseDown (const juce::MouseEvent& event)
 {
-    if (event.x < TrackHeader::preferredWidth || target() == nullptr)
+    if (event.x < headerWidth || target() == nullptr)
         return;
     cancelGesture();
     if (onSelect)
@@ -326,7 +336,7 @@ void AutomationLaneView::mouseDown (const juce::MouseEvent& event)
     gesture.point = selected;
     gesture.anchor = event.position;
     gesture.originalBeat = selected.isValid() ? Project::getPointBeat (selected)
-                                              : juce::jmax (0.0, geometry.xToBeat (event.position.x - (float) TrackHeader::preferredWidth));
+                                              : juce::jmax (0.0, geometry.xToBeat (event.position.x - (float) headerWidth));
     if (gesture.adding && ! event.mods.isAltDown())
         gesture.originalBeat = geometry.snap (gesture.originalBeat);
     gesture.originalValue = selected.isValid() ? Project::getPointValue (selected) : yToValue (event.position.y);
@@ -394,7 +404,7 @@ void AutomationLaneView::mouseUp (const juce::MouseEvent& event)
 void AutomationLaneView::mouseDoubleClick (const juce::MouseEvent& event)
 {
     cancelGesture();
-    if (event.mods.isLeftButtonDown() && event.x >= TrackHeader::preferredWidth)
+    if (event.mods.isLeftButtonDown() && event.x >= headerWidth)
         deletePoint (pointAt (event.position));
 }
 
@@ -432,7 +442,7 @@ void AutomationLaneView::clearSelection()
 
 void AutomationLaneView::updateHover (juce::Point<float> position)
 {
-    hovered = position.x >= (float) TrackHeader::preferredWidth ? pointAt (position) : juce::ValueTree();
+    hovered = position.x >= (float) headerWidth ? pointAt (position) : juce::ValueTree();
     setMouseCursor (hovered.isValid() ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::CrosshairCursor);
     repaint();
 }

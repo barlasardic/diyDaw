@@ -52,6 +52,46 @@ MainComponent::MainComponent()
     detail.onPreviewNote = [this] (int pitch, float velocity, bool on) { playLiveNote (pitch, velocity, on); };
     addAndMakeVisible (detail);
 
+    // Resizable bottom panel (Ableton's detail view): drag the divider, double-click to collapse.
+    juce::PropertiesFile::Options options;
+    options.applicationName = "diyDaw";
+    options.folderName = "diyDaw";
+    options.filenameSuffix = ".settings";
+    options.osxLibrarySubFolder = "Application Support";
+    appSettings.setStorageParameters (options);
+
+    if (auto* s = appSettings.getUserSettings())
+    {
+        detailHeight = s->getIntValue ("detailHeight", DetailView::preferredHeight);
+        detailCollapsed = s->getBoolValue ("detailCollapsed", false);
+        arrangement.setHeaderWidth (s->getIntValue ("headerWidth", TrackHeader::preferredWidth));
+    }
+
+    arrangement.onHeaderWidthChanged = [this] (int) { saveLayout(); };
+
+    detailDivider.onDragStart = [this]
+    {
+        if (detailCollapsed)
+        {
+            detailCollapsed = false;
+            detailHeight = DetailView::headerHeight + 40;
+        }
+        detailHeightAtDragStart = detail.getHeight();
+    };
+    detailDivider.onDrag = [this] (int deltaY)
+    {
+        detailHeight = detailHeightAtDragStart - deltaY;
+        resized();
+    };
+    detailDivider.onDragEnd = [this] { saveLayout(); };
+    detailDivider.onDoubleClick = [this]
+    {
+        detailCollapsed = ! detailCollapsed;
+        resized();
+        saveLayout();
+    };
+    addAndMakeVisible (detailDivider);
+
     stripViewport.setViewedComponent (&stripHolder, false);
     stripViewport.setScrollBarsShown (false, true);
     mixer.addAndMakeVisible (stripViewport);
@@ -764,6 +804,17 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     return handleComputerKeyboard (key);
 }
 
+void MainComponent::saveLayout()
+{
+    if (auto* s = appSettings.getUserSettings())
+    {
+        s->setValue ("detailHeight", detailHeight);
+        s->setValue ("detailCollapsed", detailCollapsed);
+        s->setValue ("headerWidth", arrangement.getHeaderWidth());
+        s->saveIfNeeded();
+    }
+}
+
 void MainComponent::paint (juce::Graphics& g)
 {
     g.fillAll (colours::background);
@@ -787,7 +838,14 @@ void MainComponent::resized()
     auto area = getLocalBounds();
     transportBar.setBounds (area.removeFromTop (48));
     positionBar.setBounds (area.removeFromTop (SongPositionBar::preferredHeight));
-    detail.setBounds (area.removeFromBottom (juce::jmin (DetailView::preferredHeight, area.getHeight() / 2)));
+    // The detail panel keeps its height; the arrangement / mixer gets the rest (at least 120 px).
+    constexpr int minDetail = 120, minMain = 120;
+    const auto maxDetail = juce::jmax (minDetail, area.getHeight() - minMain - PanelDivider::thickness);
+    detailHeight = juce::jlimit (minDetail, maxDetail, detailHeight);
+    const auto shownHeight = detailCollapsed ? DetailView::headerHeight : detailHeight;
+
+    detail.setBounds (area.removeFromBottom (shownHeight));
+    detailDivider.setBounds (area.removeFromBottom (PanelDivider::thickness));
 
     arrangement.setBounds (area);
     mixer.setBounds (area);

@@ -12,8 +12,74 @@ namespace daw
 
 namespace
 {
-    constexpr int laneHeight = 64;
     constexpr float trimHandleWidth = 6.0f;
+
+    /** Message-thread hit surface. Screen deltas stay stable when its bounds move. */
+    class ResizeHandle final : public juce::Component
+    {
+    public:
+        explicit ResizeHandle (bool horizontal) : horizontalAxis (horizontal)
+        {
+            setMouseCursor (horizontal ? juce::MouseCursor::LeftRightResizeCursor
+                                       : juce::MouseCursor::UpDownResizeCursor);
+            setMouseClickGrabsKeyboardFocus (false);
+        }
+
+        std::function<int()> getValue;
+        std::function<void (int)> onResize;
+        std::function<void()> onFinish, onReset;
+        std::function<void (const juce::MouseEvent&, const juce::MouseWheelDetails&)> onScroll;
+
+        void mouseDown (const juce::MouseEvent& event) override
+        {
+            active = event.mods.isLeftButtonDown();
+            if (active)
+            {
+                anchor = event.getScreenPosition();
+                original = getValue();
+            }
+        }
+
+        void mouseDrag (const juce::MouseEvent& event) override
+        {
+            if (active)
+            {
+                const auto delta = event.getScreenPosition() - anchor;
+                onResize (original + (horizontalAxis ? delta.x : delta.y));
+            }
+        }
+
+        void mouseUp (const juce::MouseEvent& event) override
+        {
+            if (! active)
+                return;
+            if (event.mouseWasDraggedSinceMouseDown())
+                mouseDrag (event);
+            active = false;
+            if (getValue() != original && onFinish)
+                onFinish();
+        }
+
+        void mouseDoubleClick (const juce::MouseEvent& event) override
+        {
+            if (event.mods.isLeftButtonDown() && onReset)
+            {
+                active = false;
+                onReset();
+            }
+        }
+
+        void mouseWheelMove (const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override
+        {
+            if (onScroll)
+                onScroll (event, wheel);
+        }
+
+    private:
+        bool horizontalAxis, active = false;
+        int original = 0;
+        juce::Point<int> anchor;
+    };
 
     bool commandDown (const juce::ModifierKeys& mods)
     {
@@ -22,7 +88,7 @@ namespace
 }
 
 /** Scrolling content, including headers. All drawing, gestures and previews are
-    message-thread only; the document is changed only when a gesture completes. */
+    message-thread only; clip edits commit when a gesture completes, layout changes live. */
 class ArrangementView::Lanes : public juce::Component
 {
 public:
@@ -34,7 +100,7 @@ public:
         syncHeaders();
     }
 
-    int timelineWidth() const { return juce::jmax (0, getWidth() - TrackHeader::preferredWidth); }
+    int timelineWidth() const { return juce::jmax (0, getWidth() - owner.getHeaderWidth()); }
 
     // All vertical geometry comes from this layout, including automation sub-lanes.
     struct RowLayout
@@ -77,6 +143,21 @@ public:
                 Row row;
                 row.header = std::make_unique<TrackHeader> (owner.project, track);
                 row.automation = std::make_unique<AutomationLaneView> (owner.project, track, owner.geometry, owner.playheadBeat);
+                row.resizeHandle = std::make_unique<ResizeHandle> (false);
+                row.resizeHandle->getValue = [track] { return Project::getTrackHeight (track); };
+                row.resizeHandle->onResize = [this, track] (int height)
+                {
+                    if (owner.project.indexOfTrack (track) >= 0)
+                        owner.project.setTrackHeight (track, height);
+                };
+                row.resizeHandle->onReset = [this, track]
+                {
+                    owner.project.setTrackHeight (track, Project::defaultTrackHeight);
+                };
+                row.resizeHandle->onScroll = [this] (const auto& event, const auto& wheel)
+                {
+                    owner.scrollOrZoom (event, wheel, true);
+                };
                 row.header->onAutomationToggled = [this, track] (bool expanded)
                 {
                     for (auto& item : rows)
@@ -109,6 +190,7 @@ public:
                 };
                 addAndMakeVisible (*row.header);
                 addChildComponent (*row.automation);
+                addAndMakeVisible (*row.resizeHandle);
                 updated.push_back (std::move (row));
             }
         }
@@ -165,7 +247,7 @@ public:
         if (x >= -2.0f && x <= (float) timelineWidth() + 2.0f)
         {
             const auto visible = owner.viewport.getViewArea();
-            repaint (TrackHeader::preferredWidth + (int) std::floor (x) - 2,
+            repaint (owner.getHeaderWidth() + (int) std::floor (x) - 2,
                      visible.getY(), 5, visible.getHeight());
         }
     }
@@ -176,13 +258,17 @@ public:
         int y = 0;
         for (auto& row : rows)
         {
+            const auto laneHeight = Project::getTrackHeight (row.header->getTrack());
             const auto automationTop = y + laneHeight;
             const auto bottom = automationTop + (row.expanded ? AutomationLaneView::preferredHeight : 0);
             layout.push_back ({ y, automationTop, bottom, row.expanded });
-            row.header->setBounds (0, y, TrackHeader::preferredWidth, laneHeight);
+            row.header->setBounds (0, y, owner.getHeaderWidth(), laneHeight);
             row.header->setAutomationShown (row.expanded);
+            row.automation->setHeaderWidth (owner.getHeaderWidth());
             row.automation->setBounds (0, automationTop, getWidth(), AutomationLaneView::preferredHeight);
             row.automation->setVisible (row.expanded);
+            row.resizeHandle->setBounds (0, automationTop - 4, getWidth(), 4);
+            row.resizeHandle->toFront (false);
             y = bottom;
         }
     }
@@ -191,8 +277,8 @@ public:
     {
         g.fillAll (colours::background);
         g.saveState();
-        g.reduceClipRegion (TrackHeader::preferredWidth, 0, timelineWidth(), getHeight());
-        g.setOrigin (TrackHeader::preferredWidth, 0);
+        g.reduceClipRegion (owner.getHeaderWidth(), 0, timelineWidth(), getHeight());
+        g.setOrigin (owner.getHeaderWidth(), 0);
 
         const auto trackCount = owner.project.getNumTracks();
         const auto contentHeight = tracksHeight();
@@ -280,7 +366,7 @@ public:
 
     void mouseDown (const juce::MouseEvent& event) override
     {
-        if (! event.mods.isLeftButtonDown() || event.x < TrackHeader::preferredWidth)
+        if (! event.mods.isLeftButtonDown() || event.x < owner.getHeaderWidth())
             return;
 
         if (isShowing())
@@ -364,7 +450,7 @@ public:
 
     void mouseDoubleClick (const juce::MouseEvent& event) override
     {
-        if (! event.mods.isLeftButtonDown() || event.x < TrackHeader::preferredWidth)
+        if (! event.mods.isLeftButtonDown() || event.x < owner.getHeaderWidth())
             return;
 
         cancelDrag();
@@ -498,7 +584,7 @@ private:
 
     juce::Point<float> timelinePoint (const juce::MouseEvent& event) const
     {
-        return event.position.translated (-(float) TrackHeader::preferredWidth, 0.0f);
+        return event.position.translated (-(float) owner.getHeaderWidth(), 0.0f);
     }
 
     juce::ValueTree clipAt (juce::Point<float> point) const
@@ -540,7 +626,7 @@ private:
     juce::Rectangle<float> clipBounds (int row, double start, double length) const
     {
         return { owner.geometry.beatToX (start), (float) (layout[(size_t) row].top + 2),
-                 (float) (length * owner.geometry.pixelsPerBeat), (float) (laneHeight - 4) };
+                 (float) (length * owner.geometry.pixelsPerBeat), (float) (layout[(size_t) row].automationTop - layout[(size_t) row].top - 4) };
     }
 
     ClipDrawInfo drawInfo (const juce::ValueTree& clip, const juce::ValueTree& track,
@@ -662,6 +748,7 @@ private:
     {
         std::unique_ptr<TrackHeader> header;
         std::unique_ptr<AutomationLaneView> automation;
+        std::unique_ptr<ResizeHandle> resizeHandle;
         bool expanded = false;
     };
     std::vector<Row> rows;
@@ -702,6 +789,21 @@ ArrangementView::ArrangementView (Project& p)
     viewport.setWantsKeyboardFocus (false);
     viewport.getVerticalScrollBar().setMouseClickGrabsKeyboardFocus (false);
     addAndMakeVisible (viewport);
+    auto handle = std::make_unique<ResizeHandle> (true);
+    handle->getValue = [this] { return getHeaderWidth(); };
+    handle->onResize = [this] (int width) { setHeaderWidth (width); };
+    handle->onFinish = [this]
+    {
+        if (onHeaderWidthChanged)
+            onHeaderWidthChanged (headerWidth);
+    };
+    handle->onScroll = [this] (const auto& event, const auto& wheel)
+    {
+        scrollOrZoom (event, wheel, getLocalPoint (event.eventComponent, event.position).y
+                                     >= (float) TimeRuler::preferredHeight);
+    };
+    addAndMakeVisible (*handle);
+    headerResizeHandle = std::move (handle);
     state.addListener (this);
 }
 
@@ -709,6 +811,16 @@ ArrangementView::~ArrangementView()
 {
     state.removeListener (this);
     viewport.setViewedComponent (nullptr, false);
+}
+
+void ArrangementView::setHeaderWidth (int width)
+{
+    width = juce::jlimit (TrackHeader::minWidth, TrackHeader::maxWidth, width);
+    if (headerWidth == width)
+        return;
+    headerWidth = width;
+    resized();
+    repaint();
 }
 
 void ArrangementView::showAutomationForTracksWithAutomation()
@@ -751,22 +863,25 @@ void ArrangementView::paint (juce::Graphics& g)
 {
     g.fillAll (colours::background);
     g.setColour (colours::panelRaised);
-    g.fillRect (0, 0, TrackHeader::preferredWidth, TimeRuler::preferredHeight);
+    g.fillRect (0, 0, headerWidth, TimeRuler::preferredHeight);
     g.setColour (colours::textDim);
     g.setFont (juce::FontOptions (11.0f));
-    g.drawText ("TRACKS", 10, 0, TrackHeader::preferredWidth - 20, TimeRuler::preferredHeight,
+    g.drawText ("TRACKS", 10, 0, headerWidth - 20, TimeRuler::preferredHeight,
                 juce::Justification::centredLeft);
 }
 
 void ArrangementView::resized()
 {
     viewport.setBounds (getLocalBounds().withTrimmedTop (TimeRuler::preferredHeight));
+    lanes->resized();
     const auto height = juce::jmax (viewport.getMaximumVisibleHeight(),
-                                   lanes->tracksHeight() + laneHeight);
+                                   lanes->tracksHeight() + Project::defaultTrackHeight);
     // Showing/hiding the scrollbar changes the available width.
     lanes->setSize (viewport.getWidth(), height);
     lanes->setSize (viewport.getMaximumVisibleWidth(), height);
-    ruler.setBounds (TrackHeader::preferredWidth, 0, lanes->timelineWidth(), TimeRuler::preferredHeight);
+    ruler.setBounds (headerWidth, 0, lanes->timelineWidth(), TimeRuler::preferredHeight);
+    headerResizeHandle->setBounds (headerWidth - 2, 0, 5, getHeight());
+    headerResizeHandle->toFront (false);
     geometryChanged();
 }
 
@@ -819,7 +934,7 @@ void ArrangementView::filesDropped (const juce::StringArray& files, int x, int y
     if (! viewport.getBounds().contains (x, y))
         return;
     const auto point = lanes->getLocalPoint (this, juce::Point<int> (x, y));
-    const auto timelineX = point.x - TrackHeader::preferredWidth;
+    const auto timelineX = point.x - headerWidth;
     if (timelineX < 0 || timelineX >= lanes->timelineWidth() || point.y < 0)
         return;
 
@@ -898,8 +1013,14 @@ void ArrangementView::modelChanged (bool tracksChanged)
     lanes->repaint();
 }
 
-void ArrangementView::valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&)
+void ArrangementView::valueTreePropertyChanged (juce::ValueTree& tree, const juce::Identifier& property)
 {
+    if (tree.hasType (ids::TRACK) && property == ids::height)
+    {
+        // Layout-only state: avoid rebuilding automation target lists on every drag pixel.
+        resized();
+        return;
+    }
     modelChanged (false);
 }
 

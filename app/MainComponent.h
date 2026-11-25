@@ -3,6 +3,7 @@
 #include "ArrangementView.h"
 #include "DawLookAndFeel.h"
 #include "DetailView.h"
+#include "PanelDivider.h"
 #include "ExportDialog.h"
 #include "Engine.h"
 #include "Project.h"
@@ -119,6 +120,14 @@ private:
     TransportBar transportBar { project };
     ArrangementView arrangement { project };
     DetailView detail { project };
+    PanelDivider detailDivider;
+
+    // Layout remembered between sessions (app settings, not the project).
+    juce::ApplicationProperties appSettings;
+    int detailHeight = DetailView::preferredHeight;
+    int detailHeightAtDragStart = 0;
+    bool detailCollapsed = false;
+    void saveLayout();
     SongPositionBar positionBar { project };
     bool patternMode = false;
     juce::ValueTree lastSelectedMidiClip;

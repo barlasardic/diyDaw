@@ -32,6 +32,11 @@ public:
     /** Called ~30 Hz by the owner: playhead, follow mode, header meters. */
     void refresh();
 
+    /** Message-thread layout state. The callback fires once after a width drag. */
+    int getHeaderWidth() const { return headerWidth; }
+    void setHeaderWidth (int);
+    std::function<void (int)> onHeaderWidthChanged;
+
     /** Snapshot helper: expand tracks containing automation lanes (UI state only). */
     void showAutomationForTracksWithAutomation();
 
@@ -68,9 +73,11 @@ private:
     Project& project;
     TimelineGeometry geometry;
     juce::ValueTree state;
+    int headerWidth = TrackHeader::preferredWidth;
     TimeRuler ruler;
     juce::Viewport viewport;
     std::unique_ptr<Lanes> lanes;
+    std::unique_ptr<juce::Component> headerResizeHandle;
     double playheadBeat = 0.0;
     double lastBpm = 0.0;
 

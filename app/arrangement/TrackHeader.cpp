@@ -169,6 +169,23 @@ void TrackHeader::resized()
     area.removeFromLeft (4);
     area = area.reduced (6, 4);
 
+    // Compact lanes keep the name and all buttons in one row, above the resize edge.
+    const auto compact = getHeight() < 54;
+    meter.setVisible (! compact);
+    volumeSlider.setVisible (! compact);
+    if (compact)
+    {
+        auto title = area.withSizeKeepingCentre (area.getWidth(), 22);
+        automationButton.setBounds (title.removeFromRight (22));
+        title.removeFromRight (3);
+        soloButton.setBounds (title.removeFromRight (22));
+        title.removeFromRight (3);
+        activatorButton.setBounds (title.removeFromRight (24));
+        title.removeFromRight (3);
+        nameLabel.setBounds (title);
+        return;
+    }
+
     // Meter hugs the right edge; the rest is name row + controls row.
     meter.setBounds (area.removeFromRight (10).reduced (0, 2));
     area.removeFromRight (5);

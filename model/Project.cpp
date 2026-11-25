@@ -474,6 +474,12 @@ juce::Colour Project::getTrackColour (const juce::ValueTree& track)
     return juce::Colour::fromString (track[ids::colour].toString());
 }
 
+void Project::setTrackHeight (juce::ValueTree track, int heightInPixels)
+{
+    if (track.hasType (ids::TRACK))
+        track.setProperty (ids::height, juce::jlimit (minTrackHeight, maxTrackHeight, heightInPixels), nullptr);
+}
+
 void Project::setTrackGain (juce::ValueTree track, float db)
 {
     if (track.hasType (ids::TRACK))

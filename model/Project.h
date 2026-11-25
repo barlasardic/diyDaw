@@ -44,6 +44,7 @@ namespace ids
     DAW_DECLARE_ID (velocity)    // NOTE: 0..1
     DAW_DECLARE_ID (type)        // DEVICE: "synth", "eq", "compressor", "reverb", "delay"
     DAW_DECLARE_ID (enabled)     // DEVICE (effects): bool, false = bypassed
+    DAW_DECLARE_ID (height)      // TRACK: arrangement lane height in pixels (UI layout, not undoable)
     DAW_DECLARE_ID (uid)         // DEVICE: id unique within the project (automation targets refer to it)
     DAW_DECLARE_ID (target)      // AUTOMATION: "gain", "pan" or "<device uid>:<param id>"
     DAW_DECLARE_ID (beat)        // POINT: timeline position
@@ -147,6 +148,14 @@ public:
     AudioTrack& getEngineTrack (const juce::ValueTree& track);
     void setTrackName (juce::ValueTree track, const juce::String& newName);
     static juce::Colour getTrackColour (const juce::ValueTree& track);
+
+    // Arrangement lane height (layout state saved with the project; not undoable, like Ableton).
+    static constexpr int minTrackHeight = 40, defaultTrackHeight = 64, maxTrackHeight = 320;
+    void setTrackHeight (juce::ValueTree track, int heightInPixels);
+    static int getTrackHeight (const juce::ValueTree& track)
+    {
+        return juce::jlimit (minTrackHeight, maxTrackHeight, (int) track.getProperty (ids::height, defaultTrackHeight));
+    }
 
     // Mixer (undoable; values are clamped like AudioTrack's).
     void setTrackGain (juce::ValueTree track, float db);

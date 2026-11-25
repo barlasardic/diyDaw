@@ -31,6 +31,7 @@ public:
     juce::ValueTree getTrack() const { return track; }
 
     static constexpr int preferredWidth = 180;
+    static constexpr int minWidth = 140, maxWidth = 360;
 
     void paint (juce::Graphics&) override;
     void resized() override;
