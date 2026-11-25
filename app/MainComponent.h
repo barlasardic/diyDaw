@@ -20,6 +20,7 @@ namespace daw
     (arrangement and mixer, switched with Tab). */
 class MainComponent : public juce::Component,
                       private juce::AudioIODeviceCallback,
+                      private juce::ValueTree::Listener,
                       private juce::Timer
 {
 public:
@@ -33,7 +34,24 @@ public:
     /** Decodes files on this thread and places file i on track i at beat i * beatSpacing.
         For the --snapshot tooling; the UI path is the asynchronous drop in ArrangementView. */
     void loadFilesSynchronously (const juce::Array<juce::File>& files, double beatSpacing);
+
+    /** Opens a project and decodes its samples on this thread (--snapshot tooling). */
+    juce::Result openProjectSynchronously (const juce::File& file);
+
     Project& getProject() noexcept { return project; }
+
+    // ---- file actions (asynchronous: they may ask about unsaved changes / show choosers)
+    void newProject();
+    void openProject();                     // shows a file chooser
+    void openProject (const juce::File& file);
+    void saveProject (std::function<void (bool saved)> then = {});
+    void saveProjectAs (std::function<void (bool saved)> then = {});
+
+    /** Asks to save unsaved changes, then calls quit if the user didn't cancel. */
+    void requestQuit (std::function<void()> quit);
+
+    /** "Name* - diyDaw", for the window title. */
+    juce::String getDocumentTitle() const;
 
 private:
     // AudioIODeviceCallback (audio thread)
@@ -47,8 +65,19 @@ private:
 
     void addTrack();
     void showAudioSettings();
+    void showFileMenu();
     void setShowingMixer (bool shouldShowMixer);
+    void syncStrips();
     void layoutStrips();
+    void showError (const juce::String& title, const juce::String& message);
+
+    /** Runs 'action' after the user saved or discarded unsaved changes (not if they cancel). */
+    void confirmDiscardingChanges (std::function<void()> action);
+    void updateTitle();
+
+    void valueTreeChildAdded (juce::ValueTree&, juce::ValueTree&) override;
+    void valueTreeChildRemoved (juce::ValueTree&, juce::ValueTree&, int) override;
+    void valueTreeChildOrderChanged (juce::ValueTree&, int, int) override;
 
     DawLookAndFeel lookAndFeel;
 
@@ -57,7 +86,10 @@ private:
     Project project { engine, samplePool };
     juce::AudioDeviceManager deviceManager;
 
-    TransportBar transportBar { engine };
+    juce::ValueTree projectState { project.getState() };
+    std::unique_ptr<juce::FileChooser> fileChooser;
+
+    TransportBar transportBar { project };
     ArrangementView arrangement { project };
 
     // Mixer view
@@ -65,7 +97,7 @@ private:
     juce::Component stripHolder;
     juce::Viewport stripViewport;
     std::vector<std::unique_ptr<TrackStrip>> strips;
-    MasterStrip masterStrip { engine };
+    MasterStrip masterStrip { project };
     bool showingMixer = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)

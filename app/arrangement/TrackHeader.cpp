@@ -1,5 +1,6 @@
 #include "TrackHeader.h"
 #include "DawLookAndFeel.h"
+#include "ProjectControls.h"
 
 #include <cmath>
 
@@ -53,8 +54,6 @@ namespace
 TrackHeader::TrackHeader (Project& p, juce::ValueTree t)
     : project (p), track (t)
 {
-    auto& audioTrack = project.getEngineTrack (track);
-
     // ---- name -----------------------------------------------------------
     nameLabel.setText (track[ids::name].toString(), juce::dontSendNotification);
     nameLabel.setFont (juce::FontOptions (12.0f, juce::Font::bold));
@@ -66,41 +65,34 @@ TrackHeader::TrackHeader (Project& p, juce::ValueTree t)
     nameLabel.setJustificationType (juce::Justification::centredLeft);
     nameLabel.setEditable (false, true);
     nameLabel.setMouseClickGrabsKeyboardFocus (false);
-    nameLabel.onTextChange = [this] { project.setTrackName (track, nameLabel.getText()); };
+    nameLabel.onTextChange = [this]
+    {
+        project.beginTransaction ("Rename Track");
+        project.setTrackName (track, nameLabel.getText());
+    };
     addAndMakeVisible (nameLabel);
 
     // ---- track activator (lit = audible) --------------------------------
-    const auto index = project.indexOfTrack (track);
-    activatorButton.setButtonText (index >= 0 ? juce::String (index + 1) : juce::String ("?"));
     styleHeaderButton (activatorButton, colours::mute);
-    activatorButton.setToggleState (! audioTrack.isMuted(), juce::dontSendNotification);
-    activatorButton.onClick = [this]
-    {
-        project.getEngineTrack (track).setMute (! activatorButton.getToggleState());
-    };
+    bindToggleToProject (activatorButton, project, "Toggle Track Activator",
+                         [this] (bool lit) { project.setTrackMute (track, ! lit); });
     addAndMakeVisible (activatorButton);
 
     // ---- solo -----------------------------------------------------------
     soloButton.setButtonText ("S");
     styleHeaderButton (soloButton, colours::solo);
-    soloButton.setToggleState (audioTrack.isSoloed(), juce::dontSendNotification);
-    soloButton.onClick = [this]
-    {
-        project.getEngineTrack (track).setSolo (soloButton.getToggleState());
-    };
+    bindToggleToProject (soloButton, project, "Toggle Solo",
+                         [this] (bool on) { project.setTrackSolo (track, on); });
     addAndMakeVisible (soloButton);
 
     // ---- volume ---------------------------------------------------------
     configureVolumeSlider (volumeSlider);
-    volumeSlider.setValue (audioTrack.getGainDb(), juce::dontSendNotification);
     volumeSlider.textFromValueFunction = [] (double value) { return gainText ((float) value); };
-    volumeSlider.setTooltip (gainText (audioTrack.getGainDb()));
-    volumeSlider.onValueChange = [this]
+    bindSliderToProject (volumeSlider, project, "Change Volume", [this] (double v)
     {
-        auto& engineTrack = project.getEngineTrack (track);
-        engineTrack.setGainDb ((float) volumeSlider.getValue());
-        volumeSlider.setTooltip (gainText (engineTrack.getGainDb()));
-    };
+        project.setTrackGain (track, (float) v);
+        volumeSlider.setTooltip (gainText (Project::getTrackGain (track)));
+    });
     addAndMakeVisible (volumeSlider);
 
     // ---- meter ----------------------------------------------------------
@@ -115,15 +107,15 @@ void TrackHeader::refresh()
 
     meter.setLevels (audioTrack.getMeter().consume (0), audioTrack.getMeter().consume (1));
 
-    // Resync from the engine without notifications, but never fight the user mid-drag.
+    // Resync from the model without notifications, but never fight the user mid-drag.
     if (! volumeSlider.isMouseButtonDown())
     {
-        volumeSlider.setValue (audioTrack.getGainDb(), juce::dontSendNotification);
-        volumeSlider.setTooltip (gainText (audioTrack.getGainDb()));
+        volumeSlider.setValue (Project::getTrackGain (track), juce::dontSendNotification);
+        volumeSlider.setTooltip (gainText (Project::getTrackGain (track)));
     }
 
-    activatorButton.setToggleState (! audioTrack.isMuted(), juce::dontSendNotification);
-    soloButton.setToggleState (audioTrack.isSoloed(), juce::dontSendNotification);
+    activatorButton.setToggleState (! Project::isTrackMuted (track), juce::dontSendNotification);
+    soloButton.setToggleState (Project::isTrackSoloed (track), juce::dontSendNotification);
 
     const auto index = project.indexOfTrack (track);
     const auto numberText = index >= 0 ? juce::String (index + 1) : juce::String ("?");

@@ -68,6 +68,9 @@ void SamplePool::finishLoad (const juce::String& key, Ptr sample)
 
     insert (key, sample);
 
+    if (sample == nullptr && onLoadFailed)
+        onLoadFailed (key);
+
     for (auto& cb : callbacks)
         if (cb)
             cb (sample);

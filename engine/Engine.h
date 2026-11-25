@@ -35,6 +35,10 @@ public:
     /** Activates the next free track slot. Returns its index, or -1 if all are in use. */
     int addTrack();
     int getNumTracks() const noexcept { return numTracks.load(); }
+
+    /** Deactivates every track, empties its clips and resets its mixer settings, so the next
+        addTrack() returns slot 0 again (used when a project is replaced). */
+    void resetTracks();
     AudioTrack& getTrack (int index) noexcept { return *tracks[(size_t) index]; }
 
     void setMasterGainDb (float db) noexcept { masterGainDb.store (juce::jlimit (AudioTrack::minGainDb, AudioTrack::maxGainDb, db)); }

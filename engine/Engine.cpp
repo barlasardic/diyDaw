@@ -24,6 +24,21 @@ int Engine::addTrack()
     return index;
 }
 
+void Engine::resetTracks()
+{
+    numTracks.store (0);
+
+    for (auto& t : tracks)
+    {
+        t->setClips (std::make_unique<ClipList>());
+        t->setGainDb (0.0f);
+        t->setPan (0.0f);
+        t->setMute (false);
+        t->setSolo (false);
+        t->setName ("Audio");
+    }
+}
+
 void Engine::collectGarbage()
 {
     for (auto& t : tracks)

@@ -1,5 +1,6 @@
 #include "TrackStrip.h"
 #include "DawLookAndFeel.h"
+#include "ProjectControls.h"
 
 #include <cmath>
 
@@ -85,47 +86,43 @@ namespace
 }
 
 //==============================================================================
-TrackStrip::TrackStrip (AudioTrack& audioTrack)
-    : track (audioTrack)
+TrackStrip::TrackStrip (Project& p, juce::ValueTree t)
+    : project (p), track (t)
 {
-    nameLabel.setText (track.getName(), juce::dontSendNotification);
     styleStripHeader (nameLabel);
     addAndMakeVisible (nameLabel);
 
     panKnob.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     panKnob.setRange (-1.0, 1.0, 0.01);
-    panKnob.setValue (track.getPan(), juce::dontSendNotification);
     panKnob.setDoubleClickReturnValue (true, 0.0);
     panKnob.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     panKnob.setPopupDisplayEnabled (true, true, this);
     panKnob.textFromValueFunction = [] (double value) { return panText (value); };
     panKnob.setMouseClickGrabsKeyboardFocus (false);
-    panKnob.onValueChange = [this] { track.setPan ((float) panKnob.getValue()); };
+    bindSliderToProject (panKnob, project, "Change Pan",
+                         [this] (double v) { project.setTrackPan (track, (float) v); });
     addAndMakeVisible (panKnob);
 
     // Ableton-style track activator: lit means audible, dark means muted.
-    muteButton.setButtonText (trackNumberText (track.getName()));
     styleStripButton (muteButton, colours::mute);
-    muteButton.setToggleState (! track.isMuted(), juce::dontSendNotification);
-    muteButton.onClick = [this] { track.setMute (! muteButton.getToggleState()); };
+    bindToggleToProject (muteButton, project, "Toggle Track Activator",
+                         [this] (bool lit) { project.setTrackMute (track, ! lit); });
     addAndMakeVisible (muteButton);
 
     styleStripButton (soloButton, colours::solo);
-    soloButton.setToggleState (track.isSoloed(), juce::dontSendNotification);
-    soloButton.onClick = [this] { track.setSolo (soloButton.getToggleState()); };
+    bindToggleToProject (soloButton, project, "Toggle Solo",
+                         [this] (bool on) { project.setTrackSolo (track, on); });
     addAndMakeVisible (soloButton);
 
     configureGainFader (fader);
-    fader.setValue (track.getGainDb(), juce::dontSendNotification);
-    fader.onValueChange = [this]
+    bindSliderToProject (fader, project, "Change Volume", [this] (double v)
     {
-        track.setGainDb ((float) fader.getValue());
-        gainLabel.setText (gainText (track.getGainDb()), juce::dontSendNotification);
-    };
+        project.setTrackGain (track, (float) v);
+        gainLabel.setText (gainText (Project::getTrackGain (track)), juce::dontSendNotification);
+    });
     addAndMakeVisible (fader);
 
     styleStripLabel (gainLabel, 10.0f, colours::textDim);
-    gainLabel.setText (gainText (track.getGainDb()), juce::dontSendNotification);
     addAndMakeVisible (gainLabel);
 
     addAndMakeVisible (meter);
@@ -135,25 +132,30 @@ TrackStrip::TrackStrip (AudioTrack& audioTrack)
 
 void TrackStrip::refresh()
 {
-    meter.setLevels (track.getMeter().consume (0), track.getMeter().consume (1));
+    auto& engineTrack = project.getEngineTrack (track);
+    meter.setLevels (engineTrack.getMeter().consume (0), engineTrack.getMeter().consume (1));
 
-    // Resync from the track without notifications, but never fight the user mid-drag.
+    // Resync from the model without notifications, but never fight the user mid-drag.
+    const auto gain = Project::getTrackGain (track);
+
     if (! fader.isMouseButtonDown())
     {
-        fader.setValue (track.getGainDb(), juce::dontSendNotification);
-        gainLabel.setText (gainText (track.getGainDb()), juce::dontSendNotification);
+        fader.setValue (gain, juce::dontSendNotification);
+        gainLabel.setText (gainText (gain), juce::dontSendNotification);
     }
 
     if (! panKnob.isMouseButtonDown())
-        panKnob.setValue (track.getPan(), juce::dontSendNotification);
+        panKnob.setValue (Project::getTrackPan (track), juce::dontSendNotification);
 
-    muteButton.setToggleState (! track.isMuted(), juce::dontSendNotification);
-    soloButton.setToggleState (track.isSoloed(), juce::dontSendNotification);
+    muteButton.setToggleState (! Project::isTrackMuted (track), juce::dontSendNotification);
+    soloButton.setToggleState (Project::isTrackSoloed (track), juce::dontSendNotification);
 
-    if (nameLabel.getText() != track.getName())
+    const auto name = track[ids::name].toString();
+
+    if (nameLabel.getText() != name)
     {
-        nameLabel.setText (track.getName(), juce::dontSendNotification);
-        muteButton.setButtonText (trackNumberText (track.getName()));
+        nameLabel.setText (name, juce::dontSendNotification);
+        muteButton.setButtonText (trackNumberText (name));
     }
 }
 
@@ -197,23 +199,21 @@ void TrackStrip::resized()
 }
 
 //==============================================================================
-MasterStrip::MasterStrip (Engine& e) : engine (e)
+MasterStrip::MasterStrip (Project& p) : project (p)
 {
     nameLabel.setText ("Master", juce::dontSendNotification);
     styleStripHeader (nameLabel);
     addAndMakeVisible (nameLabel);
 
     configureGainFader (fader);
-    fader.setValue (engine.getMasterGainDb(), juce::dontSendNotification);
-    fader.onValueChange = [this]
+    bindSliderToProject (fader, project, "Change Master Volume", [this] (double v)
     {
-        engine.setMasterGainDb ((float) fader.getValue());
-        gainLabel.setText (gainText (engine.getMasterGainDb()), juce::dontSendNotification);
-    };
+        project.setMasterGain ((float) v);
+        gainLabel.setText (gainText (project.getMasterGain()), juce::dontSendNotification);
+    });
     addAndMakeVisible (fader);
 
     styleStripLabel (gainLabel, 10.0f, colours::textDim);
-    gainLabel.setText (gainText (engine.getMasterGainDb()), juce::dontSendNotification);
     addAndMakeVisible (gainLabel);
 
     addAndMakeVisible (meter);
@@ -223,12 +223,13 @@ MasterStrip::MasterStrip (Engine& e) : engine (e)
 
 void MasterStrip::refresh()
 {
-    meter.setLevels (engine.getMasterMeter().consume (0), engine.getMasterMeter().consume (1));
+    auto& meterSource = project.getEngine().getMasterMeter();
+    meter.setLevels (meterSource.consume (0), meterSource.consume (1));
 
     if (! fader.isMouseButtonDown())
     {
-        fader.setValue (engine.getMasterGainDb(), juce::dontSendNotification);
-        gainLabel.setText (gainText (engine.getMasterGainDb()), juce::dontSendNotification);
+        fader.setValue (project.getMasterGain(), juce::dontSendNotification);
+        gainLabel.setText (gainText (project.getMasterGain()), juce::dontSendNotification);
     }
 }
 

@@ -19,6 +19,7 @@ struct ClipDrawInfo
     double lengthSeconds = 0.0;                 // audio time spanned by the clip's width
     bool looping = false;                       // audio wraps to the sample start when it runs out
     bool selected = false;
+    bool missing = false;                       // sample == nullptr because the file couldn't be loaded
 };
 
 /** Ableton-style clip: a title bar in the track colour with the clip name, and a body

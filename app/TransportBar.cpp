@@ -1,5 +1,6 @@
 #include "TransportBar.h"
 #include "DawLookAndFeel.h"
+#include "ProjectControls.h"
 
 #include <cmath>
 
@@ -32,9 +33,14 @@ namespace
     }
 }
 
-TransportBar::TransportBar (Engine& e) : engine (e)
+TransportBar::TransportBar (Project& p) : project (p), engine (p.getEngine())
 {
     auto& transport = engine.getTransport();
+
+    fileButton.setMouseClickGrabsKeyboardFocus (false);
+    fileButton.setTooltip ("New, open and save projects");
+    fileButton.onClick = [this] { if (onFileMenu) onFileMenu(); };
+    addAndMakeVisible (fileButton);
 
     styleIconButton (playButton, makePlayIcon(), colours::play);
     playButton.shouldUseOnColours (true);
@@ -62,7 +68,7 @@ TransportBar::TransportBar (Engine& e) : engine (e)
     bpmSlider.setVelocityBasedMode (false);
     bpmSlider.setDoubleClickReturnValue (true, 120.0);
     bpmSlider.setColour (juce::Slider::trackColourId, juce::Colours::transparentBlack);
-    bpmSlider.onValueChange = [this] { engine.getTransport().setBpm (bpmSlider.getValue()); };
+    bindSliderToProject (bpmSlider, project, "Change Tempo", [this] (double v) { project.setBpm (v); });
     addAndMakeVisible (bpmSlider);
 
     bpmCaption.setColour (juce::Label::textColourId, colours::textDim);
@@ -133,6 +139,9 @@ void TransportBar::paint (juce::Graphics& g)
 void TransportBar::resized()
 {
     auto area = getLocalBounds().reduced (8, 6);
+
+    fileButton.setBounds (area.removeFromLeft (52).reduced (0, 2));
+    area.removeFromLeft (12);
 
     auto left = area.removeFromLeft (220);
     bpmCaption.setBounds (left.removeFromLeft (30));

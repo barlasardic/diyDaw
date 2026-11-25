@@ -396,8 +396,11 @@ private:
     ClipDrawInfo drawInfo (const juce::ValueTree& clip, const juce::ValueTree& track,
                            double offset, double length) const
     {
-        return { Project::getClipName (clip), Project::getTrackColour (track), owner.project.getClipSample (clip),
-                 offset, owner.project.beatsToSeconds (length), Project::isClipLooping (clip), clip == selected };
+        auto sample = owner.project.getClipSample (clip);
+        const auto missing = sample == nullptr && ! owner.project.getSamplePool().isLoading (Project::getClipFile (clip));
+
+        return { Project::getClipName (clip), Project::getTrackColour (track), std::move (sample),
+                 offset, owner.project.beatsToSeconds (length), Project::isClipLooping (clip), clip == selected, missing };
     }
 
     void cancelDrag()

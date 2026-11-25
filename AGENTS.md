@@ -7,8 +7,9 @@ fresh clones need `git submodule update --init`).
 - `engine/` — device-independent real-time audio engine (namespace `daw`). Only depends on
   `juce_audio_basics` / `juce_audio_formats`. Never include GUI or device headers here.
   Tracks play immutable `ClipList` snapshots (`engine/Clip.h`).
-- `model/` — headless document model: `Project` (ValueTree of TRACK/CLIP + UndoManager,
-  pushes ClipList snapshots to the engine on every change) and `SamplePool` (background
+- `model/` — headless document model: `Project` (ValueTree of PROJECT/TRACK/CLIP +
+  UndoManager; owns tempo, master and track mixer values and clips; pushes everything to the
+  engine on every change; saves/loads `.diydaw` XML files) and `SamplePool` (background
   decoding + cache). No GUI code here either.
 - `app/` — JUCE GUI application (transport bar, mixer strips, meters, look-and-feel).
 - `app/arrangement/` — arrangement view: `TimelineGeometry` (beats<->pixels, grid, snap),
@@ -16,9 +17,12 @@ fresh clones need `git submodule update --init`).
 - `tests/` — headless `juce::UnitTest` tests, category `"diyDaw"`, run by `DawEngineTests`.
 
 ## Data flow
-UI gesture -> `Project` edit (undoable) -> ValueTree listener -> new `ClipList` ->
-`AudioTrack::setClips` (lock-free) -> audio thread. The UI never edits the ValueTree or the
-engine's clip data directly; it reads the ValueTree to draw.
+UI gesture -> `Project` edit (undoable) -> ValueTree listener -> new `ClipList` /
+mixer atomics -> audio thread. The UI never edits the ValueTree or engine state directly
+(no `AudioTrack::setGainDb` etc. from the UI); it reads the ValueTree to draw. Sliders and
+toggles use `bindSliderToProject` / `bindToggleToProject` (`app/ProjectControls.h`) so each
+gesture is one undo step. Loading a file replaces the tree's children, so views must sync
+their per-track components from ValueTree child-added/removed callbacks.
 
 ## Arrangement view (interaction spec, Ableton-like)
 - Layout: TimeRuler across the top (offset by `TrackHeader::preferredWidth`), then one lane per

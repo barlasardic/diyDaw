@@ -50,7 +50,8 @@ if(DAW_BUILD_TESTS)
         tests/TransportTests.cpp
         tests/MetronomeTests.cpp
         tests/TrackTests.cpp
-        tests/ProjectTests.cpp)
+        tests/ProjectTests.cpp
+        tests/PersistenceTests.cpp)
     target_compile_definitions(DawEngineTests PRIVATE ${DAW_COMMON_DEFINITIONS})
     target_link_libraries(DawEngineTests PRIVATE
         daw_model

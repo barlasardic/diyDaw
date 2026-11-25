@@ -3,6 +3,7 @@
 #include "AudioTrack.h"
 #include "Engine.h"
 #include "LevelMeter.h"
+#include "Project.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -10,7 +11,8 @@
 namespace daw
 {
 
-/** One vertical mixer channel strip for an AudioTrack (Ableton session-mixer style).
+/** One vertical mixer channel strip for a project track (Ableton session-mixer style).
+    Controls edit the Project (undoable); refresh() pulls the model back into the controls.
 
     Top to bottom: track name header, pan knob, mute ("track activator") + solo
     buttons, then fader with a level meter beside it and a dB readout.
@@ -21,7 +23,9 @@ namespace daw
 class TrackStrip : public juce::Component
 {
 public:
-    explicit TrackStrip (AudioTrack& track);
+    TrackStrip (Project& project, juce::ValueTree track);
+
+    juce::ValueTree getTrack() const { return track; }
 
     /** Called ~30 Hz by the owner: pulls meter levels and resyncs controls. */
     void refresh();
@@ -32,7 +36,8 @@ public:
     void resized() override;
 
 private:
-    AudioTrack& track;
+    Project& project;
+    juce::ValueTree track;
 
     juce::Label nameLabel;
     juce::Slider panKnob;
@@ -49,7 +54,7 @@ private:
 class MasterStrip : public juce::Component
 {
 public:
-    explicit MasterStrip (Engine& engine);
+    explicit MasterStrip (Project& project);
 
     void refresh();
 
@@ -59,7 +64,7 @@ public:
     void resized() override;
 
 private:
-    Engine& engine;
+    Project& project;
 
     juce::Label nameLabel;
     juce::Slider fader;

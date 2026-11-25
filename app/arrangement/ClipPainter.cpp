@@ -75,9 +75,10 @@ void paintClip (juce::Graphics& g, juce::Rectangle<float> bounds, const ClipDraw
 
             if (loadingArea.getWidth() > 1.0f)
             {
-                g.setColour (juce::Colours::white.withAlpha (0.65f));
+                g.setColour (info.missing ? juce::Colour (0xffff6b6b) : juce::Colours::white.withAlpha (0.65f));
                 g.setFont (juce::FontOptions (11.0f));
-                g.drawText ("Loading...", loadingArea, juce::Justification::centredLeft, true);
+                g.drawText (info.missing ? "Missing file" : "Loading...", loadingArea,
+                            juce::Justification::centredLeft, true);
             }
         }
         else if (! sample->peaks.empty()

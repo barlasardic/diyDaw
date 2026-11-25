@@ -1,5 +1,7 @@
 #include "MainComponent.h"
 
+#include <algorithm>
+
 namespace daw
 {
 
@@ -9,8 +11,14 @@ MainComponent::MainComponent()
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
 
     // Clips whose sample was still decoding were skipped in the engine snapshot.
-    samplePool.onSampleAdded = [this] (const juce::String&) { project.syncAllTracks(); };
+    samplePool.onSampleAdded = [this] (const juce::String&)
+    {
+        project.syncAllTracks();
+        arrangement.repaint();
+    };
+    samplePool.onLoadFailed = [this] (const juce::String&) { arrangement.repaint(); };
 
+    transportBar.onFileMenu = [this] { showFileMenu(); };
     transportBar.onAddTrack = [this] { addTrack(); };
     transportBar.onAudioSettings = [this] { showAudioSettings(); };
     transportBar.onToggleView = [this] { setShowingMixer (! showingMixer); };
@@ -25,8 +33,9 @@ MainComponent::MainComponent()
     mixer.addAndMakeVisible (masterStrip);
     addChildComponent (mixer);
 
-    for (int i = 0; i < 4; ++i)
-        addTrack();
+    projectState.addListener (this);
+    project.newDocument (4);
+    syncStrips();
 
     // Ask for stereo out, no inputs. A failure (e.g. no device) leaves the UI usable
     // and the user can pick a device from the Audio... dialog.
@@ -48,6 +57,7 @@ MainComponent::MainComponent()
 MainComponent::~MainComponent()
 {
     stopTimer();
+    projectState.removeListener (this);
     deviceManager.removeAudioCallback (this);
     deviceManager.closeAudioDevice();
 
@@ -79,6 +89,7 @@ void MainComponent::timerCallback()
 {
     engine.collectGarbage();
     transportBar.refresh();
+    updateTitle();
 
     if (showingMixer)
     {
@@ -95,14 +106,238 @@ void MainComponent::timerCallback()
 
 void MainComponent::addTrack()
 {
-    const auto track = project.addTrack();
-    if (! track.isValid())
-        return;
+    project.addTrack(); // syncStrips() runs from the ValueTree listener
+}
 
-    auto strip = std::make_unique<TrackStrip> (project.getEngineTrack (track));
-    stripHolder.addAndMakeVisible (*strip);
-    strips.push_back (std::move (strip));
+void MainComponent::syncStrips()
+{
+    // Keep strips whose track still exists, in model order; make strips for new tracks.
+    std::vector<std::unique_ptr<TrackStrip>> updated;
+
+    for (const auto& track : project.getState())
+    {
+        auto existing = std::find_if (strips.begin(), strips.end(),
+                                      [&track] (const auto& s) { return s != nullptr && s->getTrack() == track; });
+
+        if (existing != strips.end())
+            updated.push_back (std::move (*existing));
+        else
+        {
+            auto strip = std::make_unique<TrackStrip> (project, track);
+            stripHolder.addAndMakeVisible (*strip);
+            updated.push_back (std::move (strip));
+        }
+    }
+
+    strips = std::move (updated);
     layoutStrips();
+}
+
+void MainComponent::valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTree&)
+{
+    if (parent == projectState)
+        syncStrips();
+}
+
+void MainComponent::valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree&, int)
+{
+    if (parent == projectState)
+        syncStrips();
+}
+
+void MainComponent::valueTreeChildOrderChanged (juce::ValueTree& parent, int, int)
+{
+    if (parent == projectState)
+        syncStrips();
+}
+
+// ---- files --------------------------------------------------------------------
+
+namespace
+{
+    const juce::String fileWildcard = juce::String ("*") + Project::fileExtension;
+
+    juce::File defaultProjectFolder()
+    {
+        return juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile ("diyDaw");
+    }
+}
+
+juce::String MainComponent::getDocumentTitle() const
+{
+    const auto file = project.getFile();
+    const auto name = file == juce::File() ? juce::String ("Untitled") : file.getFileNameWithoutExtension();
+    return name + (project.hasUnsavedChanges() ? "*" : "") + " - diyDaw";
+}
+
+void MainComponent::updateTitle()
+{
+    if (auto* window = findParentComponentOfClass<juce::DocumentWindow>())
+        if (const auto title = getDocumentTitle(); window->getName() != title)
+            window->setName (title);
+}
+
+void MainComponent::showError (const juce::String& title, const juce::String& message)
+{
+    juce::AlertWindow::showAsync (juce::MessageBoxOptions()
+                                      .withIconType (juce::MessageBoxIconType::WarningIcon)
+                                      .withTitle (title)
+                                      .withMessage (message)
+                                      .withButton ("OK", 0)
+                                      .withAssociatedComponent (this),
+                                  nullptr);
+}
+
+void MainComponent::confirmDiscardingChanges (std::function<void()> action)
+{
+    if (! project.hasUnsavedChanges())
+    {
+        action();
+        return;
+    }
+
+    const auto name = project.getFile() == juce::File() ? juce::String ("Untitled")
+                                                        : project.getFile().getFileNameWithoutExtension();
+
+    juce::Component::SafePointer<MainComponent> safeThis (this);
+
+    juce::AlertWindow::showAsync (juce::MessageBoxOptions()
+                                      .withIconType (juce::MessageBoxIconType::QuestionIcon)
+                                      .withTitle ("Unsaved changes")
+                                      .withMessage ("Save changes to \"" + name + "\" before closing it?")
+                                      .withButton ("Save", 1)
+                                      .withButton ("Don't Save", 2)
+                                      .withButton ("Cancel", 0)
+                                      .withAssociatedComponent (this),
+                                  [safeThis, action = std::move (action)] (int result)
+                                  {
+                                      if (safeThis == nullptr || result == 0)
+                                          return;
+
+                                      if (result == 2)
+                                          action();
+                                      else
+                                          safeThis->saveProject ([action] (bool saved) { if (saved) action(); });
+                                  });
+}
+
+void MainComponent::newProject()
+{
+    confirmDiscardingChanges ([this]
+    {
+        engine.getTransport().stop();
+        engine.getTransport().setPositionBeats (0.0);
+        project.newDocument (4);
+    });
+}
+
+void MainComponent::openProject()
+{
+    confirmDiscardingChanges ([this]
+    {
+        const auto start = project.getFile() != juce::File() ? project.getFile().getParentDirectory()
+                                                             : defaultProjectFolder();
+
+        fileChooser = std::make_unique<juce::FileChooser> ("Open Project", start, fileWildcard);
+        fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                                  [this] (const juce::FileChooser& chooser)
+                                  {
+                                      if (const auto file = chooser.getResult(); file != juce::File())
+                                          openProject (file);
+                                  });
+    });
+}
+
+void MainComponent::openProject (const juce::File& file)
+{
+    engine.getTransport().stop();
+    engine.getTransport().setPositionBeats (0.0);
+
+    if (const auto result = project.loadFrom (file); result.failed())
+        showError ("Couldn't open project", result.getErrorMessage());
+}
+
+void MainComponent::saveProject (std::function<void (bool)> then)
+{
+    if (project.getFile() == juce::File())
+    {
+        saveProjectAs (std::move (then));
+        return;
+    }
+
+    const auto result = project.saveTo (project.getFile());
+    if (result.failed())
+        showError ("Couldn't save project", result.getErrorMessage());
+
+    if (then)
+        then (result.wasOk());
+}
+
+void MainComponent::saveProjectAs (std::function<void (bool)> then)
+{
+    auto start = project.getFile();
+    if (start == juce::File())
+    {
+        defaultProjectFolder().createDirectory();
+        start = defaultProjectFolder().getChildFile (juce::String ("Untitled") + Project::fileExtension);
+    }
+
+    fileChooser = std::make_unique<juce::FileChooser> ("Save Project", start, fileWildcard);
+    fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                                  | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [this, then = std::move (then)] (const juce::FileChooser& chooser)
+                              {
+                                  auto file = chooser.getResult();
+                                  if (file == juce::File())
+                                  {
+                                      if (then)
+                                          then (false);
+                                      return;
+                                  }
+
+                                  file = file.withFileExtension (Project::fileExtension);
+                                  const auto result = project.saveTo (file);
+                                  if (result.failed())
+                                      showError ("Couldn't save project", result.getErrorMessage());
+
+                                  if (then)
+                                      then (result.wasOk());
+                              });
+}
+
+void MainComponent::requestQuit (std::function<void()> quit)
+{
+    confirmDiscardingChanges (std::move (quit));
+}
+
+void MainComponent::showFileMenu()
+{
+    const auto cmd = juce::String ("Ctrl+");
+
+    juce::PopupMenu menu;
+    menu.addItem ("New Project\t" + cmd + "N", [this] { newProject(); });
+    menu.addItem ("Open...\t" + cmd + "O", [this] { openProject(); });
+    menu.addSeparator();
+    menu.addItem ("Save\t" + cmd + "S", [this] { saveProject(); });
+    menu.addItem ("Save As...\t" + cmd + "Shift+S", [this] { saveProjectAs(); });
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (transportBar.getFileButton()));
+}
+
+juce::Result MainComponent::openProjectSynchronously (const juce::File& file)
+{
+    const auto result = project.loadFrom (file);
+    if (result.failed())
+        return result;
+
+    for (const auto& track : project.getState())
+        for (const auto& clip : track)
+            if (const auto f = Project::getClipFile (clip); samplePool.get (f) == nullptr)
+                if (auto sample = loadSample (f, samplePool.getFormats()))
+                    samplePool.insert (SamplePool::keyFor (f), std::move (sample));
+
+    transportBar.refresh();
+    return result;
 }
 
 void MainComponent::loadFilesSynchronously (const juce::Array<juce::File>& files, double beatSpacing)
@@ -175,6 +410,24 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (mods.isCommandDown() && key.getKeyCode() == 'T')
     {
         addTrack();
+        return true;
+    }
+
+    if (mods.isCommandDown() && key.getKeyCode() == 'S')
+    {
+        mods.isShiftDown() ? saveProjectAs() : saveProject();
+        return true;
+    }
+
+    if (mods.isCommandDown() && key.getKeyCode() == 'O')
+    {
+        openProject();
+        return true;
+    }
+
+    if (mods.isCommandDown() && key.getKeyCode() == 'N')
+    {
+        newProject();
         return true;
     }
 

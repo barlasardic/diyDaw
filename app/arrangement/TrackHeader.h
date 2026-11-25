@@ -11,9 +11,8 @@ namespace daw
 /** Left-hand header of one arrangement lane (Ableton style).
 
     Contents: a thin strip in the track colour, the track name (double-click to rename via
-    Project::setTrackName), the track activator button (lit = audible; drives
-    AudioTrack::setMute), solo button, a compact horizontal volume slider bound to
-    AudioTrack::setGainDb, and a small stereo LevelMeter fed from the engine track's meter.
+    Project::setTrackName), the track activator button (lit = audible), solo button and a compact
+    horizontal volume slider, all editing the Project (undoable), and a small stereo LevelMeter fed from the engine track's meter.
 
     Message thread only. */
 class TrackHeader : public juce::Component

@@ -2,6 +2,8 @@
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include <iostream>
+
 namespace daw
 {
 
@@ -14,8 +16,9 @@ public:
 
     void initialise (const juce::String& commandLine) override
     {
-        // `diyDaw --snapshot out.png [WxH] [audio files...]` renders the UI offscreen and exits
-        // (for visual checks). Audio file i is placed on track i, staggered by one bar.
+        // `diyDaw --snapshot out.png [WxH] [audio files... | project.diydaw]` renders the UI
+        // offscreen and exits (for visual checks). Audio file i is placed on track i, staggered
+        // by one bar; a project file is opened instead (its samples decoded synchronously).
         auto args = juce::StringArray::fromTokens (commandLine, true);
         if (const auto i = args.indexOf ("--snapshot"); i >= 0 && i + 1 < args.size())
         {
@@ -26,7 +29,16 @@ public:
 
             juce::Array<juce::File> audioFiles;
             for (int a = i + 3; a < args.size(); ++a)
-                audioFiles.add (juce::File::getCurrentWorkingDirectory().getChildFile (args[a].unquoted()));
+            {
+                const auto f = juce::File::getCurrentWorkingDirectory().getChildFile (args[a].unquoted());
+                if (f.hasFileExtension (Project::fileExtension))
+                {
+                    if (const auto r = ui.openProjectSynchronously (f); r.failed())
+                        std::cerr << r.getErrorMessage() << std::endl;
+                }
+                else
+                    audioFiles.add (f);
+            }
             ui.loadFilesSynchronously (audioFiles, 4.0);
 
             const auto image = ui.createComponentSnapshot (ui.getLocalBounds());
@@ -40,9 +52,28 @@ public:
         }
 
         mainWindow = std::make_unique<MainWindow> (getApplicationName());
+
+        // `diyDaw song.diydaw` opens a project.
+        for (const auto& arg : args)
+            if (const auto f = juce::File::getCurrentWorkingDirectory().getChildFile (arg.unquoted());
+                f.hasFileExtension (Project::fileExtension) && f.existsAsFile())
+                if (auto* ui = mainWindow->getMainComponent())
+                    ui->openProject (f);
     }
-    void shutdown() override                       { mainWindow = nullptr; }
-    void systemRequestedQuit() override            { quit(); }
+
+    void shutdown() override { mainWindow = nullptr; }
+
+    void systemRequestedQuit() override
+    {
+        if (mainWindow != nullptr)
+            if (auto* ui = mainWindow->getMainComponent())
+            {
+                ui->requestQuit ([] { JUCEApplication::getInstance()->quit(); });
+                return;
+            }
+
+        quit();
+    }
 
 private:
     class MainWindow : public juce::DocumentWindow
@@ -60,6 +91,8 @@ private:
         }
 
         void closeButtonPressed() override { JUCEApplication::getInstance()->systemRequestedQuit(); }
+
+        MainComponent* getMainComponent() const { return dynamic_cast<MainComponent*> (getContentComponent()); }
 
     private:
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainWindow)

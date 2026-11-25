@@ -48,6 +48,9 @@ public:
     /** Called on the message thread whenever a new sample becomes available. */
     std::function<void (const juce::String& key)> onSampleAdded;
 
+    /** Called on the message thread when a background decode fails (missing or unreadable file). */
+    std::function<void (const juce::String& key)> onLoadFailed;
+
 private:
     void finishLoad (const juce::String& key, Ptr sample);
 
