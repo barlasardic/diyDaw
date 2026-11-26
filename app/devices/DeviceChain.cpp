@@ -9,6 +9,7 @@
 #include <cmath>
 #include <functional>
 #include <memory>
+#include <map>
 #include <vector>
 
 namespace daw
@@ -32,6 +33,29 @@ namespace
     constexpr int nameHeight = 14;
     constexpr int valueHeight = 13;
     constexpr int rowGap = 4;
+
+    // Menu IDs are shared by the effect and instrument menus.
+    constexpr int managePluginsId = 999, firstPluginId = 1000;
+
+    void addPluginMenu (juce::PopupMenu& menu, const juce::Array<juce::PluginDescription>& plugins)
+    {
+        juce::PopupMenu pluginMenu;
+        std::map<juce::String, juce::PopupMenu> vendors;
+        for (int i = 0; i < plugins.size(); ++i)
+        {
+            const auto& d = plugins.getReference (i);
+            auto vendor = d.manufacturerName.trim();
+            if (vendor.isEmpty()) vendor = "Other";
+            vendors[vendor].addItem (firstPluginId + i, d.name + " (" + d.pluginFormatName + ")");
+        }
+        for (auto& [vendor, items] : vendors)
+            pluginMenu.addSubMenu (vendor, items);
+        if (plugins.isEmpty())
+            pluginMenu.addItem ("No plugins available - press Scan in Plugin Manager", false, false, [] {});
+        menu.addSubMenu ("Plugins", pluginMenu);
+        menu.addSeparator();
+        menu.addItem (managePluginsId, "Manage plugins...");
+    }
 
     /** Combo boxes need a smaller font and a narrower arrow zone than the LookAndFeel default
         to fit the device faceplate. */
@@ -182,10 +206,30 @@ namespace
               device (deviceToShow),
               comboLookAndFeel (lookAndFeelToUse),
               type (Project::getDeviceType (deviceToShow)),
-              displayName (getEffectDisplayName (type)),
+              displayName (Project::getDeviceDisplayName (deviceToShow)),
               showsMeter (type == "compressor"),
               enabled (Project::isEffectEnabled (deviceToShow))
         {
+            instrument = Project::isPluginDevice (device) && ! Project::isEffect (device);
+            if (Project::isPluginDevice (device))
+            {
+                juce::PluginDescription description;
+                if (const auto xml = juce::parseXML (device[ids::description].toString()))
+                    description.loadFromXml (*xml);
+                styleDeviceLabel (pluginInfo, 12.0f, colours::textDim);
+                pluginInfo.setText (description.manufacturerName + " / " + description.pluginFormatName,
+                                    juce::dontSendNotification);
+                styleDeviceLabel (pluginName, 17.0f, colours::text);
+                pluginName.setText (displayName, juce::dontSendNotification);
+                pluginError.setFont (juce::FontOptions (12.0f));
+                pluginError.setColour (juce::Label::textColourId, juce::Colour (0xffff7373));
+                pluginError.setJustificationType (juce::Justification::centred);
+                pluginError.setMinimumHorizontalScale (1.0f);
+                pluginError.setTooltip (project.getPluginError (device));
+                openEditor.onClick = [this] { if (onOpenEditor) onOpenEditor (device); };
+                for (auto* c : std::initializer_list<juce::Component*> { &pluginInfo, &pluginName, &pluginError, &openEditor })
+                    addAndMakeVisible (c);
+            }
             power.setMouseClickGrabsKeyboardFocus (false);
             bindToggleToProject (power, project, "Bypass " + displayName, [this] (bool shouldBeEnabled)
             {
@@ -209,16 +253,22 @@ namespace
             removeButton.onClick = [this] { if (onRemove) onRemove (device); };
             addAndMakeVisible (removeButton);
 
+            power.setVisible (! instrument);
+            moveLeft.setVisible (! instrument);
+            moveRight.setVisible (! instrument);
+            removeButton.setVisible (! instrument);
             buildControls();
             refresh();
         }
 
         ~EffectPanel() override = default;
 
-        bool hasControls() const noexcept { return ! cells.empty(); }
+        bool hasControls() const noexcept { return ! cells.empty() || Project::isPluginDevice (device); }
 
         int getPreferredWidth() const
         {
+            if (Project::isPluginDevice (device))
+                return 300;
             if (cells.empty())
                 return minEffectPanelWidth;
 
@@ -233,6 +283,16 @@ namespace
         /** Resyncs every control from the model without disturbing an active gesture. */
         void refresh()
         {
+            if (Project::isPluginDevice (device))
+            {
+                auto* instance = project.getPluginInstance (device);
+                const auto missing = instance == nullptr;
+                pluginError.setVisible (missing);
+                pluginError.setText ("Missing: " + project.getPluginError (device), juce::dontSendNotification);
+                openEditor.setVisible (! missing);
+                openEditor.setEnabled (instance != nullptr && instance->hasEditor());
+                openEditor.setButtonText (openEditor.isEnabled() ? "Open Editor" : "No editor");
+            }
             const auto nowEnabled = Project::isEffectEnabled (device);
 
             if (nowEnabled != enabled)
@@ -295,6 +355,7 @@ namespace
             }
         }
 
+        std::function<void (juce::ValueTree)> onOpenEditor;
         std::function<void (juce::ValueTree)> onRemove;
         std::function<void (juce::ValueTree, int)> onMove;
 
@@ -315,7 +376,8 @@ namespace
                                           .withTrimmedRight (66);
             g.setColour (enabled ? colours::text : colours::textDim);
             g.setFont (juce::FontOptions (12.5f, juce::Font::bold));
-            g.drawText (displayName, title, juce::Justification::centredLeft, true);
+            if (! instrument)
+                g.drawText (displayName, title, juce::Justification::centredLeft, true);
 
             if (showsMeter && ! meterBounds.isEmpty())
             {
@@ -363,6 +425,15 @@ namespace
             moveRight.setBounds (header.removeFromRight (18).withSizeKeepingCentre (16, 16));
             moveLeft.setBounds (header.removeFromRight (18).withSizeKeepingCentre (16, 16));
 
+            if (Project::isPluginDevice (device))
+            {
+                auto body = getLocalBounds().withTrimmedTop (titleBarHeight).reduced (14, 10);
+                pluginName.setBounds (body.removeFromTop (32));
+                pluginInfo.setBounds (body.removeFromTop (24));
+                body.removeFromTop (12);
+                openEditor.setBounds (body.removeFromTop (40));
+                pluginError.setBounds (body.withY (titleBarHeight + 84).withHeight (juce::jmax (40, getHeight() - 120)));
+            }
             if (cells.empty())
             {
                 meterBounds = {};
@@ -627,6 +698,9 @@ namespace
         juce::ValueTree device;
         DevicePanelLookAndFeel& comboLookAndFeel;
         juce::String type, displayName;
+        juce::Label pluginName, pluginInfo, pluginError;
+        juce::TextButton openEditor { "Open Editor" };
+        bool instrument = false;
         bool showsMeter = false;
         bool enabled = true;
         float gainReduction = 0.0f;
@@ -652,6 +726,8 @@ struct DeviceChain::Panels
     DrumRackPanel drumRackPanel;
     DevicePanelLookAndFeel comboLookAndFeel;
     std::vector<std::unique_ptr<EffectPanel>> effects;
+    std::unique_ptr<EffectPanel> pluginInstrument;
+    juce::TextButton instrumentChooser;
     juce::TextButton addEffect { "+ Add Effect" };
     bool rebuildPending = false;
 };
@@ -682,13 +758,30 @@ DeviceChain::DeviceChain (Project& p)
 
         juce::Component::SafePointer<DeviceChain> safeThis (this);
         const auto targetTrack = track;
+        const auto plugins = project.getPluginHost() != nullptr ? project.getPluginHost()->getEffects()
+                                                               : juce::Array<juce::PluginDescription>();
+        addPluginMenu (menu, plugins);
 
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&panels->addEffect),
-                            [safeThis, targetTrack] (int result)
+                            [safeThis, targetTrack, plugins] (int result)
         {
             if (safeThis == nullptr || result <= 0)
                 return;
 
+            if (result == managePluginsId)
+            {
+                if (safeThis->onManagePlugins) safeThis->onManagePlugins();
+                return;
+            }
+            if (safeThis->project.indexOfTrack (targetTrack) < 0 && targetTrack != safeThis->project.getMaster())
+                return;
+            if (juce::isPositiveAndBelow (result - firstPluginId, plugins.size()))
+            {
+                const auto& d = plugins.getReference (result - firstPluginId);
+                safeThis->project.beginTransaction ("Add " + d.name);
+                safeThis->project.addPluginEffect (targetTrack, d);
+                return;
+            }
             const auto& effectTypes = getEffectTypes();
 
             if (result > effectTypes.size())
@@ -701,6 +794,44 @@ DeviceChain::DeviceChain (Project& p)
         });
     };
     content.addAndMakeVisible (panels->addEffect);
+    content.addChildComponent (panels->instrumentChooser);
+    panels->instrumentChooser.setMouseClickGrabsKeyboardFocus (false);
+    panels->instrumentChooser.setTooltip ("Choose an instrument");
+    panels->instrumentChooser.onClick = [this]
+    {
+        juce::PopupMenu menu;
+        const auto type = Project::getDeviceType (Project::getDevice (track));
+        menu.addItem (1, "Synth", true, type == "synth");
+        menu.addItem (2, "Drum Rack", true, type == "drumrack");
+        menu.addSeparator();
+        const auto plugins = project.getPluginHost() != nullptr ? project.getPluginHost()->getInstruments()
+                                                               : juce::Array<juce::PluginDescription>();
+        addPluginMenu (menu, plugins);
+        juce::Component::SafePointer<DeviceChain> safeThis (this);
+        const auto targetTrack = track;
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&panels->instrumentChooser),
+                            [safeThis, targetTrack, plugins] (int result)
+        {
+            if (safeThis == nullptr || result <= 0) return;
+            if (result == managePluginsId)
+            {
+                if (safeThis->onManagePlugins) safeThis->onManagePlugins();
+                return;
+            }
+            if (safeThis->project.indexOfTrack (targetTrack) < 0) return;
+            if (result == 1 || result == 2)
+            {
+                safeThis->project.beginTransaction ("Change instrument");
+                safeThis->project.setInstrument (targetTrack, result == 1 ? "synth" : "drumrack");
+            }
+            else if (juce::isPositiveAndBelow (result - firstPluginId, plugins.size()))
+            {
+                const auto& d = plugins.getReference (result - firstPluginId);
+                safeThis->project.beginTransaction ("Change instrument to " + d.name);
+                safeThis->project.setPluginInstrument (targetTrack, d);
+            }
+        });
+    };
 
     addAndMakeVisible (viewport);
 }
@@ -740,8 +871,20 @@ void DeviceChain::rebuildNow()
 {
     const auto isMidi = track.isValid() && Project::isMidiTrack (track);
     const auto isDrum = isMidi && Project::isDrumTrack (track);
-    synthPanel.setTrack (isMidi && ! isDrum ? track : juce::ValueTree());
-    synthPanel.setVisible (isMidi && ! isDrum);
+    const auto instrument = Project::getDevice (track);
+    const auto isPlugin = isMidi && Project::isPluginDevice (instrument);
+    synthPanel.setTrack (isMidi && ! isDrum && ! isPlugin ? track : juce::ValueTree());
+    synthPanel.setVisible (isMidi && ! isDrum && ! isPlugin);
+    panels->pluginInstrument.reset();
+    if (isPlugin)
+    {
+        panels->pluginInstrument = std::make_unique<EffectPanel> (project, instrument, 0, 0, panels->comboLookAndFeel);
+        panels->pluginInstrument->onOpenEditor = [this] (juce::ValueTree d) { if (onOpenPluginEditor) onOpenPluginEditor (d); };
+        content.addAndMakeVisible (*panels->pluginInstrument);
+    }
+    panels->instrumentChooser.setButtonText (Project::getDeviceDisplayName (instrument) + "  v");
+    panels->instrumentChooser.setVisible (isMidi);
+    panels->instrumentChooser.toFront (false);
     panels->drumRackPanel.setTrack (isDrum ? track : juce::ValueTree());
     panels->drumRackPanel.setVisible (isDrum);
 
@@ -757,9 +900,10 @@ void DeviceChain::rebuildNow()
         auto panel = std::make_unique<EffectPanel> (project, effects[i], i, effects.size(),
                                                     panels->comboLookAndFeel);
 
+        panel->onOpenEditor = [this] (juce::ValueTree d) { if (onOpenPluginEditor) onOpenPluginEditor (d); };
         panel->onRemove = [this] (juce::ValueTree device)
         {
-            project.beginTransaction ("Remove " + getEffectDisplayName (Project::getDeviceType (device)));
+            project.beginTransaction ("Remove " + Project::getDeviceDisplayName (device));
             project.removeEffect (device);
             rebuild();
         };
@@ -772,7 +916,7 @@ void DeviceChain::rebuildNow()
             if (index < 0)
                 return;
 
-            project.beginTransaction ("Move " + getEffectDisplayName (Project::getDeviceType (device)));
+            project.beginTransaction ("Move " + Project::getDeviceDisplayName (device));
             project.moveEffect (device, index + delta);
             rebuild();
         };
@@ -788,6 +932,9 @@ void DeviceChain::rebuildNow()
 
 void DeviceChain::refresh()
 {
+    if (panels->pluginInstrument != nullptr)
+        panels->pluginInstrument->refresh();
+
     if (synthPanel.isVisible())
         synthPanel.refresh();
 
@@ -806,7 +953,8 @@ void DeviceChain::resized()
 
     const auto isMidi = track.isValid() && Project::isMidiTrack (track);
     const auto isDrum = isMidi && Project::isDrumTrack (track);
-    const auto instrumentWidth = isDrum ? DrumRackPanel::preferredWidth : SynthPanel::preferredWidth;
+    const auto instrumentWidth = panels->pluginInstrument != nullptr ? 300
+                               : (isDrum ? DrumRackPanel::preferredWidth : SynthPanel::preferredWidth);
 
     auto neededWidth = chainPadding * 2;
 
@@ -827,7 +975,10 @@ void DeviceChain::resized()
 
     if (isMidi)
     {
-        if (isDrum)
+        panels->instrumentChooser.setBounds (x + 18, 2, panels->pluginInstrument != nullptr ? 276 : 150, titleBarHeight - 4);
+        if (panels->pluginInstrument != nullptr)
+            panels->pluginInstrument->setBounds (x, 0, instrumentWidth, height);
+        else if (isDrum)
             panels->drumRackPanel.setBounds (x, 0, instrumentWidth, height);
         else
             synthPanel.setBounds (x, 0, instrumentWidth, height);

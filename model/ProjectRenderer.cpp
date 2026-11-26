@@ -9,6 +9,7 @@ namespace daw
 ProjectRenderer::ProjectRenderer (Project& source, const ExportSettings& s)
     : settings (s), copy (engine, source.getSamplePool())
 {
+    copy.setPluginHost (source.getPluginHost()); // the copy loads its own plugin instances
     copy.copyFrom (source);
 
     engine.prepare (settings.sampleRate, blockSize);

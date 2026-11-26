@@ -7,9 +7,14 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(DAW_BUILD_APP "Build the GUI application (needs ALSA/JACK dev packages on Linux)" ON)
 option(DAW_BUILD_TESTS "Build the headless engine tests" ON)
+option(DAW_BUILD_TEST_PLUGINS "Build tiny VST3/LV2 plugins used by the plugin-hosting tests" ON)
 option(DAW_AUDIO_BACKENDS "Enable ALSA + JACK audio I/O on Linux (OFF = compile-only, no sound)" ON)
 
 add_subdirectory(external/JUCE EXCLUDE_FROM_ALL)
+
+if(DAW_BUILD_TEST_PLUGINS)
+    add_subdirectory(tests/plugins)
+endif()
 
 # ---------------------------------------------------------------------------
 # Engine sources: device-independent DSP core, compiled into every target that
@@ -33,6 +38,8 @@ target_include_directories(daw_engine INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/engi
 # Headless document model (tracks/clips, undo, sample pool) on top of the engine.
 add_library(daw_model INTERFACE)
 target_sources(daw_model INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/model/PluginDevices.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/model/PluginHost.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/model/Project.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/model/ProjectRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/model/SamplePool.cpp)
@@ -43,7 +50,9 @@ set(DAW_COMMON_DEFINITIONS
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_DISPLAY_SPLASH_SCREEN=0
-    JUCE_STRICT_REFCOUNTEDPOINTER=1)
+    JUCE_STRICT_REFCOUNTEDPOINTER=1
+    JUCE_PLUGINHOST_VST3=1
+    JUCE_PLUGINHOST_LV2=1)
 
 # ---------------------------------------------------------------------------
 # Headless tests
@@ -68,12 +77,18 @@ if(DAW_BUILD_TESTS)
         tests/AutomationTests.cpp
         tests/MasterTailTests.cpp
         tests/DrumRackTests.cpp
-        tests/DrumTrackTests.cpp)
-    target_compile_definitions(DawEngineTests PRIVATE ${DAW_COMMON_DEFINITIONS})
+        tests/DrumTrackTests.cpp
+        tests/PluginTests.cpp)
+    target_compile_definitions(DawEngineTests PRIVATE ${DAW_COMMON_DEFINITIONS}
+        DAW_TEST_PLUGIN_DIR="${CMAKE_BINARY_DIR}/tests/plugins")
+    if(DAW_BUILD_TEST_PLUGINS)
+        add_dependencies(DawEngineTests DiyDawTestGain_VST3 DiyDawTestGain_LV2 DiyDawTestSynth_VST3 DiyDawTestSynth_LV2)
+    endif()
     target_link_libraries(DawEngineTests PRIVATE
         daw_model
         juce::juce_audio_basics
         juce::juce_audio_formats
+        juce::juce_audio_processors
         juce::juce_data_structures
         juce::juce_graphics
         juce::juce_recommended_config_flags
@@ -90,6 +105,8 @@ if(DAW_BUILD_APP)
     target_sources(DiyDaw PRIVATE
         app/Main.cpp
         app/MainComponent.cpp
+        app/plugins/PluginManager.cpp
+        app/plugins/PluginWindows.cpp
         app/ExportDialog.cpp
         app/SongPositionBar.cpp
         app/TransportBar.cpp
@@ -106,7 +123,7 @@ if(DAW_BUILD_APP)
         app/devices/DeviceChain.cpp
         app/devices/DrumRackPanel.cpp
         app/DetailView.cpp)
-    target_include_directories(DiyDaw PRIVATE app app/arrangement app/clipeditor app/devices)
+    target_include_directories(DiyDaw PRIVATE app app/arrangement app/clipeditor app/devices app/plugins)
     target_compile_definitions(DiyDaw PRIVATE
         ${DAW_COMMON_DEFINITIONS}
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:DiyDaw,JUCE_PRODUCT_NAME>"

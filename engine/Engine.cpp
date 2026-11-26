@@ -39,6 +39,7 @@ void Engine::resetTracks()
         t->setInstrumentEnabled (false);
         t->setEffects (std::make_unique<EffectChain>());
         t->setAutomation (std::make_unique<AutomationList>());
+        t->setPluginInstrument (nullptr);
         t->setName ("Audio");
     }
 }

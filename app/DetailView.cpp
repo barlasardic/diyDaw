@@ -44,6 +44,12 @@ DetailView::DetailView (Project& p) : project (p), pianoRoll (p), deviceChain (p
             onPreviewNote (pitch, velocity, on);
     };
 
+    deviceChain.onOpenPluginEditor = [this] (juce::ValueTree device)
+    {
+        if (onOpenPluginEditor) onOpenPluginEditor (device);
+    };
+    deviceChain.onManagePlugins = [this] { if (onManagePlugins) onManagePlugins(); };
+
     addChildComponent (pianoRoll);
     addChildComponent (deviceChain);
     updateVisibility();

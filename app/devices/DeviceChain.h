@@ -49,6 +49,9 @@ public:
     /** Auditions a note on the track (pad clicks in a drum rack). */
     std::function<void (int pitch, float velocity, bool isNoteOn)> onPreviewNote;
 
+    std::function<void (juce::ValueTree device)> onOpenPluginEditor;
+    std::function<void()> onManagePlugins;
+
     void paint (juce::Graphics&) override;
     void resized() override;
 

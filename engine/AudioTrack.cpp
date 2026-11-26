@@ -14,6 +14,9 @@ void AudioTrack::prepare (double sampleRate, int maxBlockSize)
     drumRack.prepare (sampleRate, maxBlockSize);
     drumRack.reset();
 
+    if (auto* slot = pluginSlot.acquire(); slot != nullptr && slot->instrument != nullptr) // audio stopped
+        slot->instrument->prepare (sampleRate, maxBlockSize);
+
     if (auto* chain = effects.acquire()) // audio is stopped while preparing
         for (auto& e : chain->effects)
             e->prepare (sampleRate, maxBlockSize);
@@ -88,12 +91,20 @@ void AudioTrack::renderClip (const Clip& clip, const Transport::Block& block, in
     }
 }
 
+void AudioTrack::setPluginInstrument (std::shared_ptr<Instrument> instrument)
+{
+    auto slot = std::make_unique<InstrumentSlot>();
+    slot->instrument = std::move (instrument);
+    pluginSlot.publish (std::move (slot));
+}
+
 Instrument* AudioTrack::getInstrument() noexcept
 {
     switch (getInstrumentType())
     {
         case InstrumentType::synth:    return &synth;
         case InstrumentType::drumRack: return &drumRack;
+        case InstrumentType::plugin:   break; // its parameters live in the plugin
         case InstrumentType::none:     break;
     }
     return nullptr;
@@ -145,16 +156,29 @@ void AudioTrack::process (juce::AudioBuffer<float>& mixBus, const Transport::Blo
         }
     }
 
+    // Plugin instruments arrive through their own slot (acquired every block).
+    auto* slot = pluginSlot.acquire();
+    auto* pluginInstrument = slot != nullptr ? slot->instrument.get() : nullptr;
+
     if (const auto type = instrumentType.load (std::memory_order_relaxed); type != lastInstrumentType)
     {
         // Switched instrument: silence the old one and forget its sounding notes.
         if (lastInstrumentType == (int) InstrumentType::synth)    synth.reset();
         if (lastInstrumentType == (int) InstrumentType::drumRack) drumRack.reset();
+        if (lastInstrumentType == (int) InstrumentType::plugin && pluginInstrument != nullptr) pluginInstrument->reset();
         noteEndBeat.fill (-1.0);
         lastInstrumentType = type;
     }
 
-    if (lastInstrumentType != (int) InstrumentType::none)
+    switch ((InstrumentType) lastInstrumentType)
+    {
+        case InstrumentType::synth:    blockInstrument = &synth; break;
+        case InstrumentType::drumRack: blockInstrument = &drumRack; break;
+        case InstrumentType::plugin:   blockInstrument = pluginInstrument; break;
+        case InstrumentType::none:     blockInstrument = nullptr; break;
+    }
+
+    if (blockInstrument != nullptr)
         renderInstrument (list, block, n);
 
     if (auto* chain = effects.acquire())
@@ -374,9 +398,7 @@ void AudioTrack::renderInstrument (const ClipList* list, const Transport::Block&
     }
 
     // The instrument this block was set up for (not a fresh atomic read, which could differ).
-    Instrument* instrument = lastInstrumentType == (int) InstrumentType::drumRack ? static_cast<Instrument*> (&drumRack)
-                                                                                 : static_cast<Instrument*> (&synth);
-    instrument->process (scratch, n, events.data(), numEvents);
+    blockInstrument->process (scratch, n, events.data(), numEvents);
 }
 
 } // namespace daw

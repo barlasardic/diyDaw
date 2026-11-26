@@ -7,6 +7,57 @@
 namespace daw
 {
 
+namespace
+{
+    // Restrict command-line discovery to explicitly supplied directories. LV2 can
+    // return previously cached bundles, so filter its search results as well.
+    template <typename Format>
+    class SnapshotPluginFormat : public Format
+    {
+        juce::FileSearchPath getDefaultLocationsToSearch() override { return {}; }
+
+        juce::StringArray searchPathsForPlugins (const juce::FileSearchPath& paths, bool recursive, bool allowAsync) override
+        {
+            juce::StringArray result;
+            for (const auto& candidate : Format::searchPathsForPlugins (paths, recursive, allowAsync))
+                for (int i = 0; i < paths.getNumPaths(); ++i)
+                    if (const juce::File file (candidate); file == paths[i] || file.isAChildOf (paths[i]))
+                    {
+                        result.addIfNotAlreadyThere (candidate);
+                        break;
+                    }
+            return result;
+        }
+    };
+
+    void addSnapshotFormats (juce::AudioPluginFormatManager& formats)
+    {
+       #if JUCE_PLUGINHOST_VST3
+        formats.addFormat (std::make_unique<SnapshotPluginFormat<juce::VST3PluginFormat>>());
+       #endif
+       #if JUCE_PLUGINHOST_LV2
+        formats.addFormat (std::make_unique<SnapshotPluginFormat<juce::LV2PluginFormat>>());
+       #endif
+    }
+
+    void scanSnapshotPlugins (MainComponent& ui, const juce::StringArray& paths)
+    {
+        if (paths.isEmpty())
+            return;
+        juce::FileSearchPath searchPaths;
+        for (const auto& path : paths)
+            searchPaths.add (juce::File::getCurrentWorkingDirectory().getChildFile (path.unquoted()));
+        // Keep the scanning format instances: LV2 resolves plugin URIs through their
+        // loaded bundles. A copied catalogue alone cannot resolve custom LV2 folders.
+        auto& host = ui.getPluginHost();
+        const auto savedCallback = std::move (host.onScanFinished);
+        host.getKnownPlugins().clear();
+        host.setExtraSearchPaths (searchPaths);
+        host.scanNow();
+        host.onScanFinished = savedCallback; // snapshots must not overwrite the user's catalogue
+    }
+}
+
 class DiyDawApplication : public juce::JUCEApplication
 {
 public:
@@ -20,9 +71,15 @@ public:
         // offscreen and exits (for visual checks). Audio file i is placed on track i, staggered
         // by one bar; a project file is opened instead (its samples decoded synchronously).
         auto args = juce::StringArray::fromTokens (commandLine, true);
-        // `--dialog export|pianoroll|synth|devices|master` snapshots that panel instead of the main window:
+        // `--dialog export|pianoroll|synth|devices|master|plugins` snapshots that panel instead of the main window:
         // the Export Audio dialog, or the detail view showing the first MIDI clip / the first MIDI
         // track's device chain (synth and devices are the same view).
+        juce::StringArray pluginPaths;
+        for (int p = args.indexOf ("--plugin-path"); p >= 0; p = args.indexOf ("--plugin-path"))
+        {
+            if (p + 1 < args.size()) pluginPaths.add (args[p + 1]);
+            args.removeRange (p, juce::jmin (2, args.size() - p));
+        }
         juce::String dialogName;
         if (const auto d = args.indexOf ("--dialog"); d >= 0)
         {
@@ -34,7 +91,8 @@ public:
         if (const auto i = args.indexOf ("--export"); i >= 0 && i + 2 < args.size())
         {
             const auto cwd = juce::File::getCurrentWorkingDirectory();
-            MainComponent ui;
+            MainComponent ui (addSnapshotFormats);
+            scanSnapshotPlugins (ui, pluginPaths);
             auto result = ui.openProjectSynchronously (cwd.getChildFile (args[i + 2].unquoted()));
 
             if (result.wasOk())
@@ -57,7 +115,8 @@ public:
         if (const auto i = args.indexOf ("--snapshot"); i >= 0 && i + 1 < args.size())
         {
             const auto size = juce::StringArray::fromTokens (args[i + 2], "x", {});
-            MainComponent ui;
+            MainComponent ui (addSnapshotFormats);
+            scanSnapshotPlugins (ui, pluginPaths);
             if (size.size() == 2)
                 ui.setSize (size[0].getIntValue(), size[1].getIntValue());
 
@@ -91,7 +150,9 @@ public:
             }
 
             std::unique_ptr<juce::Component> dialog;
-            if (dialogName == "export")
+            if (dialogName == "plugins")
+                dialog = ui.createPluginManager();
+            else if (dialogName == "export")
                 dialog = std::make_unique<ExportDialog> (ui.getProject(), 44100.0);
             else if (dialogName == "master")
             {

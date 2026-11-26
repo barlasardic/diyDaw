@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine.h"
+#include "PluginHost.h"
 #include "SamplePool.h"
 
 #include <juce_data_structures/juce_data_structures.h>
@@ -46,6 +47,9 @@ namespace ids
     DAW_DECLARE_ID (type)        // DEVICE: "synth", "drumrack" (instruments), "eq", "compressor", "reverb", "delay"
     DAW_DECLARE_ID (enabled)     // DEVICE (effects): bool, false = bypassed
     DAW_DECLARE_ID (height)      // TRACK: arrangement lane height in pixels (UI layout, not undoable)
+    DAW_DECLARE_ID (description) // DEVICE (plugin): juce::PluginDescription as XML text
+    DAW_DECLARE_ID (pluginName)  // DEVICE (plugin): display name
+    DAW_DECLARE_ID (state)       // DEVICE (plugin): plugin state, base64 (written on save)
     DAW_DECLARE_ID (uid)         // DEVICE: id unique within the project (automation targets refer to it)
     DAW_DECLARE_ID (target)      // AUTOMATION: "gain", "pan" or "<device uid>:<param id>"
     DAW_DECLARE_ID (beat)        // POINT: timeline position
@@ -64,6 +68,8 @@ namespace ids
             DEVICE { type="drumrack", pad1File..pad16File (SamplePool keys), <DrumRack param id>=value ... }
                                                          (instead of the synth: a drum track)
             DEVICE { type="eq"|"compressor"|"reverb"|"delay", uid, enabled, <param id>=value ... }
+            DEVICE { type="plugin", uid, enabled, description, pluginName, state }    (VST3/LV2 effect)
+            DEVICE { type="pluginInstrument", uid, description, pluginName, state } (instead of the synth)
             AUTOMATION { target }
               POINT { beat, value }
 
@@ -137,7 +143,39 @@ public:
 
     /** The file the document was last saved to / loaded from (may not exist). */
     juce::File getFile() const { return documentFile; }
-    bool hasUnsavedChanges() const noexcept { return unsavedChanges; }
+    bool hasUnsavedChanges() const noexcept { return unsavedChanges || pluginsChanged.load(); }
+
+    // ---- plugins (VST3 / LV2) --------------------------------------------------------
+    /** Where plugin devices are created from. Without a host (or when a plugin can't be
+        loaded) plugin devices stay in the document but are silent ("missing"). Set it before
+        loading documents; it must outlive the Project. */
+    void setPluginHost (PluginHost* host) noexcept { pluginHost = host; }
+    PluginHost* getPluginHost() const noexcept { return pluginHost; }
+
+    /** Adds a plugin effect (like addEffect). Returns the DEVICE (even if the plugin failed to
+        load: check getPluginInstance / getPluginError). */
+    juce::ValueTree addPluginEffect (juce::ValueTree trackOrMaster, const juce::PluginDescription& description, int index = -1);
+
+    /** Replaces a MIDI track's instrument: "synth", "drumrack" (undoable). The old instrument's
+        automation goes with it. */
+    void setInstrument (juce::ValueTree track, const juce::String& instrumentType);
+    /** Replaces a MIDI track's instrument with a plugin instrument (undoable). */
+    void setPluginInstrument (juce::ValueTree track, const juce::PluginDescription& description);
+
+    static bool isPluginDevice (const juce::ValueTree& device)
+    {
+        return getDeviceType (device) == "plugin" || getDeviceType (device) == "pluginInstrument";
+    }
+    /** "Synth", "Drum Rack", "EQ Three", ... or the plugin's name. */
+    static juce::String getDeviceDisplayName (const juce::ValueTree& device);
+
+    /** The loaded plugin behind a plugin DEVICE, or nullptr if it is missing. */
+    juce::AudioPluginInstance* getPluginInstance (const juce::ValueTree& device) const;
+    /** Why a plugin DEVICE is missing ("" if it loaded). */
+    juce::String getPluginError (const juce::ValueTree& device) const;
+
+    /** A copy of the document with every plugin's current state captured (what gets saved). */
+    juce::ValueTree createSnapshot() const;
 
     // ---- tempo / master (undoable) ------------------------------------------
     void setBpm (double bpm);
@@ -194,7 +232,7 @@ public:
     static juce::String getDeviceType (const juce::ValueTree& device) { return device[ids::type].toString(); }
 
     // Insert effects: any track; processed in order after the clips / instrument, before the fader.
-    static bool isInstrumentType (const juce::String& type) { return type == "synth" || type == "drumrack"; }
+    static bool isInstrumentType (const juce::String& type) { return type == "synth" || type == "drumrack" || type == "pluginInstrument"; }
     static bool isEffect (const juce::ValueTree& tree) { return tree.hasType (ids::DEVICE) && ! isInstrumentType (getDeviceType (tree)); }
     static bool isDrumTrack (const juce::ValueTree& track) { return getDeviceType (getDevice (track)) == "drumrack"; }
 
@@ -370,6 +408,21 @@ private:
     juce::ValueTree state { ids::PROJECT };
     juce::UndoManager undoManager;
     juce::File documentFile;
+
+    // Plugin instruments (by DEVICE) and load errors. Message thread only.
+    std::vector<std::pair<juce::ValueTree, std::shared_ptr<class PluginInstrument>>> pluginInstruments;
+    std::vector<std::pair<juce::ValueTree, juce::String>> pluginErrors;
+    PluginHost* pluginHost = nullptr;
+    std::atomic<bool> pluginsChanged { false }; // a plugin's own parameters changed (any thread)
+    struct PluginChangeListener;
+    std::unique_ptr<PluginChangeListener> pluginListener;
+
+    std::unique_ptr<juce::AudioPluginInstance> createPluginFor (const juce::ValueTree& device, double sampleRate, int blockSize);
+    void replaceInstrument (juce::ValueTree track, juce::ValueTree newDevice);
+    void forgetPluginInstance (juce::AudioPluginInstance*);
+    /** Stores a plugin DEVICE's current state in the tree (not undoable), so that an undo
+        bringing the DEVICE back restores the plugin as it was. */
+    void captureStateBeforeRemoval (juce::ValueTree device);
 
     // Engine instances of effect DEVICEs (kept so an effect keeps its state, e.g. a reverb
     // tail, when the chain around it changes). Message thread only.

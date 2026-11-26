@@ -7,6 +7,8 @@
 #include "ExportDialog.h"
 #include "Engine.h"
 #include "Project.h"
+#include "PluginManager.h"
+#include "PluginWindows.h"
 #include "SamplePool.h"
 #include "SongPositionBar.h"
 #include "TrackStrip.h"
@@ -31,7 +33,8 @@ class MainComponent : public juce::Component,
                       private juce::Timer
 {
 public:
-    MainComponent();
+    explicit MainComponent (PluginHost::FormatSetup formats = [] (juce::AudioPluginFormatManager& m)
+                            { juce::addDefaultFormatsToManager (m); });
     ~MainComponent() override;
 
     void paint (juce::Graphics&) override;
@@ -55,6 +58,8 @@ public:
     void saveProject (std::function<void (bool saved)> then = {});
     void saveProjectAs (std::function<void (bool saved)> then = {});
     void showExportDialog();
+    void showPluginManager();
+    std::unique_ptr<PluginManager> createPluginManager();
 
     /** Asks to save unsaved changes, then calls quit if the user didn't cancel. */
     void requestQuit (std::function<void()> quit);
@@ -92,6 +97,11 @@ private:
     bool handleComputerKeyboard (const juce::KeyPress&);
     void showAudioSettings();
     void showFileMenu();
+
+public:
+    PluginHost& getPluginHost() noexcept { return pluginHost; }
+
+private:
     void setShowingMixer (bool shouldShowMixer);
     void syncStrips();
     void layoutStrips();
@@ -108,9 +118,19 @@ private:
     DawLookAndFeel lookAndFeel;
     juce::TooltipWindow tooltipWindow { this, 700 };
 
+    // VST3 / LV2 hosting (formats with editors). The known-plugin list is kept in the app
+    // settings folder; a plugin that crashes a scan is blacklisted via the dead-man's pedal.
+    // Declared before the engine so plugin instances (held by the engine) die first.
+    PluginHost pluginHost;
+
     Engine engine;
     SamplePool samplePool;
+    static juce::File getSettingsFolder();
+    void savePluginList();
+
     Project project { engine, samplePool };
+    PluginWindows pluginWindows { project };
+    juce::Component::SafePointer<juce::DialogWindow> pluginManagerWindow;
     juce::AudioDeviceManager deviceManager;
 
     juce::ValueTree projectState { project.getState() };

@@ -1,6 +1,7 @@
 #include "Project.h"
 
 #include "BuiltinSamples.h"
+#include "PluginDevices.h"
 
 #include <algorithm>
 #include <charconv>
@@ -19,7 +20,22 @@ namespace
     };
 }
 
-Project::Project (Engine& e, SamplePool& p) : engine (e), pool (p)
+/** Marks the document as changed when a plugin's own parameters move (e.g. in its editor).
+    Plugins may call this from any thread. */
+struct Project::PluginChangeListener : juce::AudioProcessorListener
+{
+    explicit PluginChangeListener (std::atomic<bool>& f) : flag (f) {}
+    void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override { flag.store (true); }
+    void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails& d) override
+    {
+        if (d.parameterInfoChanged || d.programChanged || d.nonParameterStateChanged)
+            flag.store (true);
+    }
+    std::atomic<bool>& flag;
+};
+
+Project::Project (Engine& e, SamplePool& p)
+    : engine (e), pool (p), pluginListener (std::make_unique<PluginChangeListener> (pluginsChanged))
 {
     state.addListener (this);
     newDocument (0);
@@ -28,6 +44,191 @@ Project::Project (Engine& e, SamplePool& p) : engine (e), pool (p)
 Project::~Project()
 {
     state.removeListener (this);
+
+    // The engine may keep plugin instances alive a little longer; make sure they no longer
+    // call back into this Project.
+    for (auto& [tree, effect] : effectInstances)
+        if (auto* p = dynamic_cast<PluginEffect*> (effect.get()))
+            p->getPlugin().removeListener (pluginListener.get());
+
+    for (auto& [tree, instrument] : pluginInstruments)
+        instrument->getPlugin().removeListener (pluginListener.get());
+}
+
+// ---- plugins ------------------------------------------------------------------------
+
+juce::String Project::getDeviceDisplayName (const juce::ValueTree& device)
+{
+    if (isPluginDevice (device))
+        return device[ids::pluginName].toString();
+
+    if (getDeviceType (device) == "drumrack")
+        return "Drum Rack";
+
+    return getEffectDisplayName (getDeviceType (device));
+}
+
+std::unique_ptr<juce::AudioPluginInstance> Project::createPluginFor (const juce::ValueTree& device, double sampleRate, int blockSize)
+{
+    pluginErrors.erase (std::remove_if (pluginErrors.begin(), pluginErrors.end(),
+                                        [&device] (const auto& e) { return e.first == device; }),
+                        pluginErrors.end());
+
+    juce::String error;
+    std::unique_ptr<juce::AudioPluginInstance> plugin;
+    juce::PluginDescription description;
+    const auto xml = juce::parseXML (device[ids::description].toString());
+
+    if (pluginHost == nullptr)
+        error = "Plugins are not available here.";
+    else if (xml == nullptr || ! description.loadFromXml (*xml))
+        error = "Unknown plugin.";
+    else
+        plugin = pluginHost->createInstance (description, sampleRate, blockSize, error);
+
+    if (plugin == nullptr)
+    {
+        pluginErrors.emplace_back (device, error.isNotEmpty() ? error : juce::String ("Couldn't load the plugin."));
+        return nullptr;
+    }
+
+    // Restore its saved state, then watch it for edits made in its own editor.
+    juce::MemoryBlock data;
+    if (const auto saved = device[ids::state].toString(); saved.isNotEmpty() && data.fromBase64Encoding (saved))
+        plugin->setStateInformation (data.getData(), (int) data.getSize());
+
+    plugin->addListener (pluginListener.get());
+    return plugin;
+}
+
+void Project::captureStateBeforeRemoval (juce::ValueTree device)
+{
+    if (! isPluginDevice (device))
+        return;
+
+    if (auto* plugin = getPluginInstance (device))
+    {
+        juce::MemoryBlock data;
+        plugin->getStateInformation (data);
+        device.setProperty (ids::state, data.toBase64Encoding(), nullptr);
+    }
+}
+
+void Project::forgetPluginInstance (juce::AudioPluginInstance* plugin)
+{
+    if (plugin != nullptr)
+        plugin->removeListener (pluginListener.get());
+}
+
+juce::AudioPluginInstance* Project::getPluginInstance (const juce::ValueTree& device) const
+{
+    if (getDeviceType (device) == "plugin")
+        if (auto* effect = dynamic_cast<PluginEffect*> (getEffectInstance (device).get()))
+            return &effect->getPlugin();
+
+    for (const auto& [tree, instrument] : pluginInstruments)
+        if (tree == device)
+            return &instrument->getPlugin();
+
+    return nullptr;
+}
+
+juce::String Project::getPluginError (const juce::ValueTree& device) const
+{
+    for (const auto& [tree, error] : pluginErrors)
+        if (tree == device)
+            return error;
+
+    return {};
+}
+
+juce::ValueTree Project::createSnapshot() const
+{
+    auto snapshot = state.createCopy();
+
+    // Plugin states live in the plugins; capture them into the copy (never into the live
+    // tree, which would add undo noise).
+    for (int t = 0; t < state.getNumChildren(); ++t)
+        for (int d = 0; d < state.getChild (t).getNumChildren(); ++d)
+            if (const auto device = state.getChild (t).getChild (d); isPluginDevice (device))
+                if (auto* plugin = getPluginInstance (device))
+                {
+                    juce::MemoryBlock data;
+                    plugin->getStateInformation (data);
+                    snapshot.getChild (t).getChild (d).setProperty (ids::state, data.toBase64Encoding(), nullptr);
+                }
+
+    return snapshot;
+}
+
+juce::ValueTree Project::addPluginEffect (juce::ValueTree track, const juce::PluginDescription& description, int index)
+{
+    if (! (track.hasType (ids::TRACK) || isMaster (track)) || description.isInstrument)
+        return {};
+
+    juce::ValueTree device (ids::DEVICE);
+    device.setProperty (ids::type, "plugin", nullptr);
+    device.setProperty (ids::uid, nextDeviceUid(), nullptr);
+    device.setProperty (ids::enabled, true, nullptr);
+    device.setProperty (ids::pluginName, description.name, nullptr);
+    device.setProperty (ids::description, description.createXml()->toString (juce::XmlElement::TextFormat().singleLine()), nullptr);
+
+    const auto effects = getEffects (track);
+    int childIndex = -1;
+
+    if (index >= 0 && index < effects.size())
+        childIndex = track.indexOf (effects[index]);
+    else if (! effects.isEmpty())
+        childIndex = track.indexOf (effects.getLast()) + 1;
+    else if (const auto instrument = getDevice (track); instrument.isValid())
+        childIndex = track.indexOf (instrument) + 1;
+
+    track.addChild (device, childIndex, &undoManager);
+    return device;
+}
+
+void Project::replaceInstrument (juce::ValueTree track, juce::ValueTree newDevice)
+{
+    const auto old = getDevice (track);
+    const auto index = old.isValid() ? track.indexOf (old) : 0;
+
+    if (old.isValid())
+    {
+        // Its automation goes with it (and comes back with an undo).
+        const auto prefix = old[ids::uid].toString() + ":";
+        for (int i = track.getNumChildren(); --i >= 0;)
+            if (const auto child = track.getChild (i); isAutomationLane (child) && getAutomationTargetId (child).startsWith (prefix))
+                track.removeChild (i, &undoManager);
+
+        captureStateBeforeRemoval (old);
+        track.removeChild (old, &undoManager);
+    }
+
+    newDevice.setProperty (ids::uid, nextDeviceUid(), nullptr);
+    track.addChild (newDevice, juce::jmin (index, track.getNumChildren()), &undoManager);
+}
+
+void Project::setInstrument (juce::ValueTree track, const juce::String& instrumentType)
+{
+    if (! isMidiTrack (track) || (instrumentType != "synth" && instrumentType != "drumrack"))
+        return;
+
+    if (getDeviceType (getDevice (track)) == instrumentType)
+        return;
+
+    replaceInstrument (track, makeDevice (instrumentType));
+}
+
+void Project::setPluginInstrument (juce::ValueTree track, const juce::PluginDescription& description)
+{
+    if (! isMidiTrack (track))
+        return;
+
+    juce::ValueTree device (ids::DEVICE);
+    device.setProperty (ids::type, "pluginInstrument", nullptr);
+    device.setProperty (ids::pluginName, description.name, nullptr);
+    device.setProperty (ids::description, description.createXml()->toString (juce::XmlElement::TextFormat().singleLine()), nullptr);
+    replaceInstrument (track, device);
 }
 
 void Project::beginTransaction (const juce::String& actionName)
@@ -270,7 +471,15 @@ juce::String Project::replaceContents (const juce::ValueTree& newState)
     undoManager.clearUndoHistory();
     state.removeAllChildren (nullptr);
     engine.resetTracks();
+    for (auto& [tree, effect] : effectInstances)
+        if (auto* p = dynamic_cast<PluginEffect*> (effect.get()))
+            forgetPluginInstance (&p->getPlugin());
+    for (auto& [tree, instrument] : pluginInstruments)
+        forgetPluginInstance (&instrument->getPlugin());
+
     effectInstances.clear();
+    pluginInstruments.clear();
+    pluginErrors.clear();
 
     state.setProperty (ids::version, fileFormatVersion, nullptr);
     state.setProperty (ids::bpm, juce::jlimit (Transport::minBpm, Transport::maxBpm,
@@ -316,7 +525,7 @@ juce::String Project::replaceContents (const juce::ValueTree& newState)
             const auto isSynth = child.hasType (ids::DEVICE) && isInstrumentType (getDeviceType (child));
             const auto keep = (child.hasType (ids::CLIP) && isMidiClip (child) == midi)
                            || (midi && isSynth && ! haveDevice)
-                           || (isEffect (child) && getEffectTypes().contains (getDeviceType (child)))
+                           || (isEffect (child) && (getEffectTypes().contains (getDeviceType (child)) || getDeviceType (child) == "plugin"))
                            || (isAutomationLane (child) && getAutomationTargetId (child).isNotEmpty());
             haveDevice = haveDevice || (keep && isSynth);
 
@@ -358,7 +567,8 @@ juce::String Project::replaceContents (const juce::ValueTree& newState)
             master = juce::ValueTree (ids::MASTER);
 
         for (int i = master.getNumChildren(); --i >= 0;)
-            if (const auto child = master.getChild (i); ! isEffect (child) || ! getEffectTypes().contains (getDeviceType (child)))
+            if (const auto child = master.getChild (i);
+                ! isEffect (child) || ! (getEffectTypes().contains (getDeviceType (child)) || getDeviceType (child) == "plugin"))
                 master.removeChild (i, nullptr);
 
         normaliseTypes (master);
@@ -398,6 +608,9 @@ juce::String Project::replaceContents (const juce::ValueTree& newState)
 
     syncEffects (getMaster());
 
+    // Loading restores plugin states, which plugins report as parameter changes.
+    pluginsChanged.store (false);
+
     undoManager.clearUndoHistory();
     unsavedChanges = false;
     return warning;
@@ -415,14 +628,14 @@ void Project::newDocument (int numAudioTracks, int numMidiTracks)
 
 void Project::copyFrom (const Project& other)
 {
-    replaceContents (other.state.createCopy());
+    replaceContents (other.createSnapshot());
     documentFile = juce::File();
 }
 
 juce::Result Project::saveTo (const juce::File& file)
 {
     const auto folder = file.getParentDirectory();
-    auto copy = state.createCopy();
+    auto copy = createSnapshot();
 
     for (auto track : copy)
     {
@@ -454,6 +667,7 @@ juce::Result Project::saveTo (const juce::File& file)
 
     documentFile = file;
     unsavedChanges = false;
+    pluginsChanged.store (false);
     return juce::Result::ok();
 }
 
@@ -674,6 +888,12 @@ const std::vector<ParamInfo>& Project::getDeviceParamInfos (const juce::ValueTre
     if (getDeviceType (device) == "drumrack")
         return DrumRack::getParamInfos();
 
+    if (isPluginDevice (device))
+    {
+        static const std::vector<ParamInfo> none; // a plugin's parameters live in its state
+        return none;
+    }
+
     return getEffectParamInfos (getDeviceType (device));
 }
 
@@ -760,6 +980,7 @@ void Project::removeEffect (juce::ValueTree device)
         if (const auto child = track.getChild (i); isAutomationLane (child) && getAutomationTargetId (child).startsWith (prefix))
             track.removeChild (i, &undoManager);
 
+    captureStateBeforeRemoval (device);
     track.removeChild (device, &undoManager);
 }
 
@@ -805,7 +1026,14 @@ void Project::syncEffects (const juce::ValueTree& track)
 
         if (instance == nullptr)
         {
-            instance = createEffect (getDeviceType (device));
+            if (getDeviceType (device) == "plugin")
+            {
+                if (auto plugin = createPluginFor (device, engine.getPreparedSampleRate(), engine.getPreparedBlockSize()))
+                    instance = std::make_shared<PluginEffect> (std::move (plugin));
+            }
+            else
+                instance = createEffect (getDeviceType (device));
+
             if (instance == nullptr)
                 continue;
 
@@ -835,9 +1063,12 @@ void Project::syncEffects (const juce::ValueTree& track)
                                            [this] (const auto& entry)
                                            {
                                                const auto parent = entry.first.getParent();
-                                               if (isMaster (parent))
-                                                   return parent != getMaster();
-                                               return ! parent.isValid() || indexOfTrack (parent) < 0;
+                                               const auto gone = isMaster (parent) ? parent != getMaster()
+                                                                                   : ! parent.isValid() || indexOfTrack (parent) < 0;
+                                               if (gone)
+                                                   if (auto* p = dynamic_cast<PluginEffect*> (entry.second.get()))
+                                                       forgetPluginInstance (&p->getPlugin());
+                                               return gone;
                                            }),
                            effectInstances.end());
 }
@@ -849,11 +1080,47 @@ void Project::syncDevice (const juce::ValueTree& track)
 
     auto& t = getEngineTrack (track);
     const auto instrumentDevice = getDevice (track);
-    const auto drums = getDeviceType (instrumentDevice) == "drumrack";
+    const auto instrumentKind = getDeviceType (instrumentDevice);
 
-    t.setInstrumentType (! isMidiTrack (track) ? AudioTrack::InstrumentType::none
-                         : drums               ? AudioTrack::InstrumentType::drumRack
-                                               : AudioTrack::InstrumentType::synth);
+    // Plugin instruments: reuse the instance of this DEVICE, or load it.
+    std::shared_ptr<PluginInstrument> pluginInstrument;
+
+    if (instrumentKind == "pluginInstrument")
+    {
+        for (const auto& [tree, instance] : pluginInstruments)
+            if (tree == instrumentDevice)
+                pluginInstrument = instance;
+
+        if (pluginInstrument == nullptr)
+            if (auto plugin = createPluginFor (instrumentDevice, engine.getPreparedSampleRate(), engine.getPreparedBlockSize()))
+            {
+                pluginInstrument = std::make_shared<PluginInstrument> (std::move (plugin));
+                pluginInstrument->prepare (engine.getPreparedSampleRate(), engine.getPreparedBlockSize());
+                pluginInstruments.emplace_back (instrumentDevice, pluginInstrument);
+            }
+    }
+
+    t.setPluginInstrument (pluginInstrument);
+
+    // Forget plugin instruments whose DEVICE left the project (the engine keeps its own
+    // reference until it is done with it).
+    pluginInstruments.erase (std::remove_if (pluginInstruments.begin(), pluginInstruments.end(),
+                                             [this] (const auto& entry)
+                                             {
+                                                 const auto parent = entry.first.getParent();
+                                                 const auto gone = ! parent.isValid() || indexOfTrack (parent) < 0
+                                                                || getDevice (parent) != entry.first;
+                                                 if (gone)
+                                                     forgetPluginInstance (&entry.second->getPlugin());
+                                                 return gone;
+                                             }),
+                             pluginInstruments.end());
+
+    t.setInstrumentType (! isMidiTrack (track)          ? AudioTrack::InstrumentType::none
+                         : instrumentKind == "drumrack"  ? AudioTrack::InstrumentType::drumRack
+                         : instrumentKind == "pluginInstrument"
+                             ? (pluginInstrument != nullptr ? AudioTrack::InstrumentType::plugin : AudioTrack::InstrumentType::none)
+                             : AudioTrack::InstrumentType::synth);
 
     if (auto* instrument = t.getInstrument())
         for (int i = 0; i < (int) getDeviceParamInfos (instrumentDevice).size(); ++i)

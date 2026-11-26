@@ -72,19 +72,30 @@ public:
     void setAutomation (std::unique_ptr<AutomationList> list) { automation.publish (std::move (list)); }
 
     /** Free clip lists, samples, effect chains, automation and drum kits the audio thread is done with. */
-    void collectGarbage() { clips.collectGarbage(); effects.collectGarbage(); automation.collectGarbage(); drumRack.collectGarbage(); }
+    void collectGarbage()
+    {
+        clips.collectGarbage();
+        effects.collectGarbage();
+        automation.collectGarbage();
+        drumRack.collectGarbage();
+        pluginSlot.collectGarbage();
+    }
 
     PeakMeter& getMeter() noexcept { return meter; }
 
     /** MIDI tracks render MIDI clips and live notes through one instrument. Switching resets
         the previous instrument (on the audio thread, at the next block). */
-    enum class InstrumentType { none, synth, drumRack };
+    enum class InstrumentType { none, synth, drumRack, plugin };
     void setInstrumentType (InstrumentType type) noexcept { instrumentType.store ((int) type); }
     InstrumentType getInstrumentType() const noexcept { return (InstrumentType) instrumentType.load(); }
 
     /** Shorthand: synth on / no instrument. */
     void setInstrumentEnabled (bool shouldBeEnabled) noexcept { setInstrumentType (shouldBeEnabled ? InstrumentType::synth : InstrumentType::none); }
     bool isInstrumentEnabled() const noexcept { return getInstrumentType() != InstrumentType::none; }
+
+    /** The instrument used for InstrumentType::plugin (e.g. a hosted VST3/LV2). It must be
+        prepared at the engine's current sample rate. Message thread; nullptr = silent. */
+    void setPluginInstrument (std::shared_ptr<Instrument> instrument);
 
     Synth& getSynth() noexcept { return synth; }
     DrumRack& getDrumRack() noexcept { return drumRack; }
@@ -119,6 +130,10 @@ private:
     RealtimeSwap<ClipList> clips;
     RealtimeSwap<EffectChain> effects;
     RealtimeSwap<AutomationList> automation;
+
+    struct InstrumentSlot { std::shared_ptr<Instrument> instrument; };
+    RealtimeSwap<InstrumentSlot> pluginSlot;
+    Instrument* blockInstrument = nullptr; // audio thread: the instrument this block renders with
     PeakMeter meter;
 
     std::atomic<int> instrumentType { (int) InstrumentType::none };

@@ -5,10 +5,17 @@
 namespace daw
 {
 
-MainComponent::MainComponent()
+MainComponent::MainComponent (PluginHost::FormatSetup formats) : pluginHost (std::move (formats))
 {
     setLookAndFeel (&lookAndFeel);
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
+
+    // Restore the catalogue. Scanning is always explicitly requested by the user.
+    pluginHost.setDeadMansPedalFile (getSettingsFolder().getChildFile ("plugin-scan-in-progress.txt"));
+    if (const auto xml = juce::parseXML (getSettingsFolder().getChildFile ("plugins.xml")))
+        pluginHost.restoreKnownList (*xml);
+    pluginHost.onScanFinished = [this] { savePluginList(); };
+    project.setPluginHost (&pluginHost);
 
     // Clips whose sample was still decoding were skipped in the engine snapshot.
     samplePool.onSampleAdded = [this] (const juce::String&)
@@ -51,6 +58,8 @@ MainComponent::MainComponent()
     addAndMakeVisible (arrangement);
 
     detail.onPreviewNote = [this] (int pitch, float velocity, bool on) { playLiveNote (pitch, velocity, on); };
+    detail.onOpenPluginEditor = [this] (juce::ValueTree d) { pluginWindows.open (d); };
+    detail.onManagePlugins = [this] { showPluginManager(); };
     addAndMakeVisible (detail);
 
     // Resizable bottom panel (Ableton's detail view): drag the divider, double-click to collapse.
@@ -63,6 +72,7 @@ MainComponent::MainComponent()
 
     if (auto* s = appSettings.getUserSettings())
     {
+        pluginHost.setExtraSearchPaths (juce::FileSearchPath (s->getValue ("pluginFolders")));
         detailHeight = s->getIntValue ("detailHeight", DetailView::preferredHeight);
         detailCollapsed = s->getBoolValue ("detailCollapsed", false);
         arrangement.setHeaderWidth (s->getIntValue ("headerWidth", TrackHeader::preferredWidth));
@@ -131,6 +141,10 @@ MainComponent::MainComponent()
 MainComponent::~MainComponent()
 {
     stopTimer();
+    pluginWindows.closeAll();
+    if (pluginManagerWindow != nullptr)
+        delete pluginManagerWindow.getComponent();
+    pluginHost.stopScan();
     deviceManager.removeMidiInputDeviceCallback ({}, this);
     exportJob.reset(); // stops the export thread before the project goes away
     if (exportWindow != nullptr)
@@ -165,6 +179,7 @@ void MainComponent::audioDeviceIOCallbackWithContext (const float* const*, int,
 
 void MainComponent::timerCallback()
 {
+    pluginWindows.prune();
     engine.collectGarbage();
     updatePlaybackRange();
     transportBar.refresh();
@@ -452,6 +467,7 @@ void MainComponent::valueTreeChildAdded (juce::ValueTree& parent, juce::ValueTre
 
 void MainComponent::valueTreeChildRemoved (juce::ValueTree& parent, juce::ValueTree&, int)
 {
+    pluginWindows.prune();
     if (parent == projectState)
         syncStrips();
 }
@@ -538,6 +554,7 @@ void MainComponent::newProject()
     {
         engine.getTransport().stop();
         engine.getTransport().setPositionBeats (0.0);
+        pluginWindows.closeAll();
         project.newDocument (2, 2);
     });
 }
@@ -564,6 +581,7 @@ void MainComponent::openProject (const juce::File& file)
     engine.getTransport().stop();
     engine.getTransport().setPositionBeats (0.0);
 
+    pluginWindows.closeAll();
     if (const auto result = project.loadFrom (file); result.failed())
         showError ("Couldn't open project", result.getErrorMessage());
 }
@@ -618,7 +636,11 @@ void MainComponent::saveProjectAs (std::function<void (bool)> then)
 
 void MainComponent::requestQuit (std::function<void()> quit)
 {
-    confirmDiscardingChanges (std::move (quit));
+    confirmDiscardingChanges ([this, quit = std::move (quit)]
+    {
+        pluginWindows.closeAll();
+        quit();
+    });
 }
 
 void MainComponent::showFileMenu()
@@ -634,7 +656,49 @@ void MainComponent::showFileMenu()
     menu.addSeparator();
     menu.addItem ("Export Audio...\t" + cmd + "Shift+R", exportJob == nullptr, false, [this] { showExportDialog(); });
 
+    menu.addSeparator();
+    menu.addItem ("Plugins...", [this] { showPluginManager(); });
+    if (pluginHost.getKnownPlugins().getNumTypes() == 0)
+        menu.addItem ("No plugins yet - open Plugins... and press Scan", false, false, [] {});
+
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (transportBar.getFileButton()));
+}
+
+std::unique_ptr<PluginManager> MainComponent::createPluginManager()
+{
+    auto* settings = appSettings.getUserSettings();
+    auto manager = std::make_unique<PluginManager> (pluginHost,
+                        juce::FileSearchPath (settings != nullptr ? settings->getValue ("pluginFolders") : juce::String()));
+    juce::Component::SafePointer<MainComponent> safeThis (this);
+    manager->onFoldersChanged = [safeThis] (const juce::FileSearchPath& paths)
+    {
+        if (safeThis != nullptr)
+            if (auto* s = safeThis->appSettings.getUserSettings())
+            {
+                s->setValue ("pluginFolders", paths.toString());
+                s->saveIfNeeded();
+            }
+    };
+    return manager;
+}
+
+void MainComponent::showPluginManager()
+{
+    if (pluginManagerWindow != nullptr)
+    {
+        pluginManagerWindow->toFront (true);
+        return;
+    }
+    juce::DialogWindow::LaunchOptions options;
+    options.content.setOwned (createPluginManager().release());
+    options.dialogTitle = "Plugins";
+    options.dialogBackgroundColour = colours::panel;
+    options.componentToCentreAround = this;
+    options.useNativeTitleBar = true;
+    options.resizable = true;
+    pluginManagerWindow = options.launchAsync();
+    if (pluginManagerWindow != nullptr)
+        pluginManagerWindow->setResizeLimits (740, 540, 1600, 1200);
 }
 
 void MainComponent::showExportDialog()
@@ -695,6 +759,7 @@ void MainComponent::showExportDialog()
 
 juce::Result MainComponent::openProjectSynchronously (const juce::File& file)
 {
+    pluginWindows.closeAll();
     const auto result = project.loadFrom (file);
     if (result.failed())
         return result;
@@ -817,6 +882,19 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     }
 
     return handleComputerKeyboard (key);
+}
+
+juce::File MainComponent::getSettingsFolder()
+{
+    auto folder = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("diyDaw");
+    folder.createDirectory();
+    return folder;
+}
+
+void MainComponent::savePluginList()
+{
+    if (const auto xml = pluginHost.createKnownListXml())
+        xml->writeTo (getSettingsFolder().getChildFile ("plugins.xml"));
 }
 
 void MainComponent::saveLayout()

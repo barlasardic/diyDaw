@@ -50,6 +50,22 @@ their per-track components from ValueTree child-added/removed callbacks.
 - UI: `app/devices/DrumRackPanel` (pads, drop samples, per-pad controls); the piano roll shows
   pad names on drum tracks. "+ Drums" / Ctrl+Alt+T creates a drum track.
 
+## Plugins (VST3 / LV2)
+- `model/PluginHost` scans (incrementally, on the message thread, with a dead-man's pedal) and
+  creates plugin instances; the app adds formats *with* editors, tests the headless ones.
+- `model/PluginDevices`: `PluginEffect` (an AudioEffect) and `PluginInstrument` (an Instrument,
+  plugged into `AudioTrack::setPluginInstrument`). Plugin DEVICEs: type "plugin" (effect) or
+  "pluginInstrument", with `description` (PluginDescription XML) and `state` (base64, captured by
+  `Project::createSnapshot` on save/export and before a plugin DEVICE is removed, so undo restores
+  it). Without a host or when loading fails the DEVICE stays, silent ("missing").
+- LV2 applies parameter edits in the audio callback: tests must render a block after an edit
+  before reading the plugin's state.
+- Test plugins: `tests/plugins` builds "diyDaw Test Gain" / "diyDaw Test Synth" (VST3 + LV2) into
+  `<build>/tests/plugins`; tests find them through `DAW_TEST_PLUGIN_DIR`. Snapshots:
+  `--plugin-path <dir>` scans a folder first, `--dialog plugins` shows the Plugin Manager.
+- UI: File > Plugins... (Plugin Manager: scan, folders, list), "+ Add Effect" > Plugins, the
+  instrument chooser in a MIDI track's first device, "Open Editor" windows (`app/plugins`).
+
 ## Effects, loop and pattern mode
 - Insert effects (`engine/AudioEffect.h`, `engine/Effects.h`: EQ Three, Compressor, Reverb,
   Delay) are effect `DEVICE`s on any track, after the instrument, before the fader. The model

@@ -43,6 +43,9 @@ public:
 
     std::function<void (int pitch, float velocity, bool isNoteOn)> onPreviewNote;
 
+    std::function<void (juce::ValueTree device)> onOpenPluginEditor;
+    std::function<void()> onManagePlugins;
+
     static constexpr int preferredHeight = 320;
     static constexpr int headerHeight = 26;
 
