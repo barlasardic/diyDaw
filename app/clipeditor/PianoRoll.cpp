@@ -269,23 +269,26 @@ void PianoRoll::paint (juce::Graphics& g)
         g.fillRect (0.0f, y, (float) keyboardWidth - 1.0f, rowHeight);
         if (blackKey (pitch) && ! sounding && ! drumRow)
         {
+            // The white key continues to the right of a black key, like on a real keyboard.
+            const auto whitePart = std::round ((float) keyboardWidth * 0.38f);
             g.setColour (colours::panelRaised);
-            g.fillRect ((float) keyboardWidth - 13.0f, y, 12.0f, rowHeight);
+            g.fillRect ((float) keyboardWidth - 1.0f - whitePart, y, whitePart, rowHeight);
         }
         g.setColour (colours::outline.withAlpha (0.65f));
         g.drawHorizontalLine ((int) std::floor (y + rowHeight), 0.0f, (float) keyboardWidth);
         if (drumRow)
         {
             g.setColour (sounding ? colours::background : colours::text);
-            g.setFont (juce::FontOptions (9.0f));
+            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 15.0f, rowHeight * 0.7f)));
             g.drawText (Project::getPadName (drumDevice, pitch - DrumRack::firstNote),
                         4, (int) std::floor (y), keyboardWidth - 8,
                         juce::jmax (1, (int) rowHeight), juce::Justification::centredLeft, true);
         }
-        else if (pitch % 12 == 0)
+        else if (pitch % 12 == 0 || (rowHeight >= 16.0f && ! blackKey (pitch)))
         {
-            g.setColour (sounding ? colours::background : colours::text);
-            g.setFont (juce::FontOptions (10.0f));
+            // C notes always; every white key once the rows are tall enough to read.
+            g.setColour (sounding ? colours::background : pitch % 12 == 0 ? colours::text : colours::textDim);
+            g.setFont (juce::FontOptions (juce::jlimit (10.0f, 14.0f, rowHeight * 0.65f)));
             g.drawText (pitchName (pitch), 5, (int) std::floor (y - 1.0f), keyboardWidth - 9,
                         juce::jmax (10, (int) rowHeight + 2), juce::Justification::centredRight);
         }
@@ -354,9 +357,20 @@ void PianoRoll::paint (juce::Graphics& g)
         g.drawRect (bounds, 1.0f);
         if (rowHeight >= 11.0f && bounds.getWidth() >= 36.0f)
         {
-            g.setColour (colours::background.withAlpha (alpha));
-            g.setFont (juce::FontOptions (10.0f));
-            g.drawText (pitchName (state.pitch), bounds.reduced (4.0f, 0.0f), juce::Justification::centredLeft);
+            // Drum tracks label notes with the pad's name, other tracks with the pitch.
+            const auto drums = Project::getDevice (clip.getParent());
+            const auto pad = state.pitch - DrumRack::firstNote;
+            const auto label = Project::isDrumTrack (clip.getParent()) && pad >= 0 && pad < DrumRack::numPads
+                                   ? Project::getPadName (drums, pad) : pitchName (state.pitch);
+            const juce::Font font (juce::FontOptions (juce::jlimit (10.0f, 13.0f, rowHeight * 0.55f)));
+
+            // Only when it fits: short drum hits would otherwise show "Clo..." everywhere.
+            if (juce::GlyphArrangement::getStringWidth (font, label) <= bounds.getWidth() - 8.0f)
+            {
+                g.setColour (colours::background.withAlpha (alpha));
+                g.setFont (font);
+                g.drawText (label, bounds.reduced (4.0f, 0.0f), juce::Justification::centredLeft, false);
+            }
         }
         g.restoreState();
 
@@ -410,7 +424,17 @@ void PianoRoll::paint (juce::Graphics& g)
     g.fillRect (0.0f, velocity.getY(), (float) keyboardWidth, velocity.getHeight());
     g.setFont (juce::FontOptions (10.0f));
     g.setColour (colours::textDim);
-    g.drawText ("NOTES", 0, 0, keyboardWidth, rulerHeight, juce::Justification::centred);
+    for (const auto plus : { false, true })
+    {
+        const auto r = zoomButton (plus);
+        g.setColour (colours::background.withAlpha (0.55f));
+        g.fillRoundedRectangle (r, 3.0f);
+        g.setColour (colours::text);
+        g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+        g.drawText (plus ? "+" : juce::String::fromUTF8 ("\xe2\x88\x92"), r, juce::Justification::centred);
+    }
+    g.setFont (juce::FontOptions (10.0f));
+    g.setColour (colours::textDim);
     g.drawText ("Velocity", 0, (int) velocity.getY() + 6, keyboardWidth, 16, juce::Justification::centred);
     const auto gridLabel = step <= 4.0 ? "1/" + juce::String ((int) std::round (4.0 / step))
                                       : juce::String (step / bar, 0) + " bars";
@@ -471,10 +495,50 @@ bool PianoRoll::atLoopEnd (juce::Point<float> point) const
         && std::abs (point.x - xAt (Project::getClipLoopLength (clip))) <= 9.0f;
 }
 
+void PianoRoll::setRowHeight (float newHeight)
+{
+    zoomRows (juce::jlimit (minRowHeight, maxRowHeight, newHeight) / rowHeight, gridBounds().getCentreY());
+}
+
+void PianoRoll::setKeyboardWidth (int newWidth)
+{
+    keyboardWidth = juce::jlimit (minKeyboardWidth, maxKeyboardWidth, newWidth);
+    clampPitchScroll();
+    repaint();
+}
+
+void PianoRoll::zoomRows (float factor, float anchorY)
+{
+    const auto grid = gridBounds();
+    const auto anchor = juce::jlimit (grid.getY(), grid.getBottom(), anchorY) - grid.getY();
+    const auto rowsFromTop = (anchor + pitchScroll) / rowHeight; // continuous pitch position under the anchor
+
+    rowHeight = juce::jlimit (minRowHeight, maxRowHeight, rowHeight * factor);
+    pitchScroll = rowsFromTop * rowHeight - anchor;
+    needsFit = false;
+    clampPitchScroll();
+    repaint();
+}
+
+bool PianoRoll::atKeyboardEdge (juce::Point<float> point) const
+{
+    return point.y >= (float) rulerHeight && std::abs (point.x - (float) keyboardWidth) <= 3.0f;
+}
+
+juce::Rectangle<float> PianoRoll::zoomButton (bool plus) const
+{
+    // The top-left corner (above the keyboard) holds the row-size buttons.
+    const auto corner = juce::Rectangle<float> (0.0f, 0.0f, (float) keyboardWidth, (float) rulerHeight).reduced (3.0f, 3.0f);
+    const auto half = corner.getWidth() * 0.5f;
+    return plus ? corner.withTrimmedLeft (half + 1.0f) : corner.withWidth (half - 1.0f);
+}
+
 void PianoRoll::updateCursor (juce::Point<float> point)
 {
     auto cursorType = juce::MouseCursor::NormalCursor;
-    if (hasClip())
+    if (atKeyboardEdge (point))
+        cursorType = juce::MouseCursor::LeftRightResizeCursor;
+    else if (hasClip())
     {
         const auto note = noteAt (point, false);
         if (atLoopEnd (point) || (note.isValid() && atRightEdge (note, point.x)))
@@ -546,6 +610,29 @@ void PianoRoll::eraseAt (juce::Point<float> point)
 
 void PianoRoll::mouseDown (const juce::MouseEvent& event)
 {
+    if (event.mods.isLeftButtonDown())
+    {
+        // Row-size buttons in the top-left corner.
+        for (const auto plus : { false, true })
+            if (zoomButton (plus).contains (event.position))
+            {
+                zoomRows (plus ? 1.25f : 0.8f, gridBounds().getCentreY());
+                if (onLayoutChanged)
+                    onLayoutChanged();
+                return;
+            }
+
+        // Dragging the keyboard's right edge resizes the keyboard.
+        if (atKeyboardEdge (event.position))
+        {
+            cancelDrag();
+            drag.mode = DragMode::keyboardResize;
+            drag.anchor = drag.current = event.position;
+            keyboardWidthAtDragStart = keyboardWidth;
+            return;
+        }
+    }
+
     if (event.mods.isRightButtonDown() && hasClip())
     {
         cancelDrag();
@@ -766,6 +853,11 @@ void PianoRoll::mouseDrag (const juce::MouseEvent& event)
         eraseAt (event.position);
         return;
     }
+    if (drag.mode == DragMode::keyboardResize)
+    {
+        setKeyboardWidth (keyboardWidthAtDragStart + juce::roundToInt (event.position.x - drag.anchor.x));
+        return;
+    }
     if (! drag.moved && event.getDistanceFromDragStart() < 3)
         return;
     drag.moved = true;
@@ -781,6 +873,13 @@ void PianoRoll::mouseUp (const juce::MouseEvent& event)
     {
         drag.mode = DragMode::none;
         eraseTransactionStarted = false;
+        return;
+    }
+    if (drag.mode == DragMode::keyboardResize)
+    {
+        drag.mode = DragMode::none;
+        if (onLayoutChanged)
+            onLayoutChanged();
         return;
     }
     validateSelection();
@@ -850,6 +949,17 @@ void PianoRoll::mouseWheelMove (const juce::MouseEvent& event, const juce::Mouse
         return;
     cancelDrag (true);
     needsFit = false;
+
+    // Alt + wheel (or Ctrl + Shift + wheel): make keys and notes taller / shorter.
+    if (event.mods.isAltDown() || (commandDown (event.mods) && event.mods.isShiftDown()))
+    {
+        const auto delta = std::abs (wheel.deltaY) > 0.0f ? wheel.deltaY : wheel.deltaX;
+        zoomRows (std::exp (delta * 1.5f), event.position.y);
+        if (onLayoutChanged)
+            onLayoutChanged();
+        return;
+    }
+
     if (commandDown (event.mods))
     {
         const auto delta = std::abs (wheel.deltaY) > 0.0f ? wheel.deltaY : wheel.deltaX;

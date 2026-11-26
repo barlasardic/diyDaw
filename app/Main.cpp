@@ -125,6 +125,11 @@ public:
             {
                 if (args[a] == "--show-automation")
                     continue;
+                if (args[a] == "--piano-rows" || args[a] == "--piano-keys")
+                {
+                    ++a; // skip the value too
+                    continue;
+                }
                 const auto f = juce::File::getCurrentWorkingDirectory().getChildFile (args[a].unquoted());
                 if (f.hasFileExtension (Project::fileExtension))
                 {
@@ -183,6 +188,13 @@ public:
                 }
 
                 detail->setTab (dialogName == "pianoroll" ? DetailView::Tab::clip : DetailView::Tab::device);
+
+                // `--piano-rows <px>` / `--piano-keys <px>`: piano roll row height / keyboard width.
+                if (const auto r = args.indexOf ("--piano-rows"); r >= 0)
+                    detail->getPianoRoll().setRowHeight (args[r + 1].getFloatValue());
+                if (const auto k = args.indexOf ("--piano-keys"); k >= 0)
+                    detail->getPianoRoll().setKeyboardWidth (args[k + 1].getIntValue());
+
                 detail->refresh();
                 dialog = std::move (detail);
             }

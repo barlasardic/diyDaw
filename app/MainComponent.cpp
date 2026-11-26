@@ -76,7 +76,11 @@ MainComponent::MainComponent (PluginHost::FormatSetup formats) : pluginHost (std
         detailHeight = s->getIntValue ("detailHeight", DetailView::preferredHeight);
         detailCollapsed = s->getBoolValue ("detailCollapsed", false);
         arrangement.setHeaderWidth (s->getIntValue ("headerWidth", TrackHeader::preferredWidth));
+        detail.getPianoRoll().setRowHeight ((float) s->getDoubleValue ("pianoRollRowHeight", PianoRoll::defaultRowHeight));
+        detail.getPianoRoll().setKeyboardWidth (s->getIntValue ("pianoRollKeyboardWidth", PianoRoll::defaultKeyboardWidth));
     }
+
+    detail.getPianoRoll().onLayoutChanged = [this] { saveLayout(); };
 
     arrangement.onHeaderWidthChanged = [this] (int) { saveLayout(); };
 
@@ -904,6 +908,8 @@ void MainComponent::saveLayout()
         s->setValue ("detailHeight", detailHeight);
         s->setValue ("detailCollapsed", detailCollapsed);
         s->setValue ("headerWidth", arrangement.getHeaderWidth());
+        s->setValue ("pianoRollRowHeight", (double) detail.getPianoRoll().getRowHeight());
+        s->setValue ("pianoRollKeyboardWidth", detail.getPianoRoll().getKeyboardWidth());
         s->saveIfNeeded();
     }
 }

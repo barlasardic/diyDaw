@@ -13,7 +13,7 @@ namespace daw
 
 /** Ableton-style MIDI note editor for one MIDI clip (shown in the detail panel).
 
-    Layout: a piano keyboard down the left (PianoRoll::keyboardWidth px), a beat ruler across
+    Layout: a piano keyboard down the left (getKeyboardWidth() px, resizable), a beat ruler across
     the top (rulerHeight), the note grid, and a velocity lane along the bottom (velocityLaneHeight).
     Time is the clip's *content* time in beats (NOTE start), shown from 0; the loop region
     [0, loopLength) is highlighted and the loop end marker in the ruler can be dragged
@@ -52,7 +52,22 @@ public:
     /** Audition a note on the clip's track (pitch, velocity 0..1, isNoteOn). */
     std::function<void (int, float, bool)> onPreviewNote;
 
-    static constexpr int keyboardWidth = 56;
+    // ---- size of keys and notes (FL style; the owner may persist these) ----------------
+    static constexpr float defaultRowHeight = 12.0f, minRowHeight = 6.0f, maxRowHeight = 40.0f;
+    static constexpr int defaultKeyboardWidth = 56, minKeyboardWidth = 40, maxKeyboardWidth = 200;
+
+    /** Height of one pitch row (keys and notes), clamped. Alt + wheel, Ctrl + Shift + wheel and
+        the "-" / "+" buttons in the top-left corner change it around the mouse / view centre. */
+    void setRowHeight (float newHeight);
+    float getRowHeight() const noexcept { return rowHeight; }
+
+    /** Width of the keyboard column, clamped. Dragging the keyboard's right edge changes it. */
+    void setKeyboardWidth (int newWidth);
+    int getKeyboardWidth() const noexcept { return keyboardWidth; }
+
+    /** Called after the user changed the row height or keyboard width. */
+    std::function<void()> onLayoutChanged;
+
     static constexpr int rulerHeight = 20;
     static constexpr int velocityLaneHeight = 56;
 
@@ -60,7 +75,13 @@ public:
     void resized() override;
 
 private:
-    enum class DragMode { none, move, length, velocity, marquee, loopEnd, keyboard, add, scrub, erase };
+    enum class DragMode { none, move, length, velocity, marquee, loopEnd, keyboard, add, scrub, erase, keyboardResize };
+
+    /** Zooms the rows by 'factor' keeping the pitch at 'anchorY' (component y) in place. */
+    void zoomRows (float factor, float anchorY);
+    bool atKeyboardEdge (juce::Point<float> point) const;
+    juce::Rectangle<float> zoomButton (bool plus) const;
+    int keyboardWidthAtDragStart = 0;
 
     /** Right button (FL style): deletes the note under the mouse; dragging keeps erasing.
         One undo step per gesture. */
@@ -134,7 +155,8 @@ private:
     TimelineGeometry geometry;
     std::vector<juce::ValueTree> selection;
     Drag drag;
-    float rowHeight = 12.0f;
+    float rowHeight = defaultRowHeight;
+    int keyboardWidth = defaultKeyboardWidth;
     float pitchScroll = 0.0f;
     double playheadBeat = -1.0;
     int previewPitch = -1;
