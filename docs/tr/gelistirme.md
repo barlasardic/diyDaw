@@ -1,3 +1,5 @@
+🇬🇧 [English](../development.md) | 🇹🇷 Türkçe
+
 # diyDaw'ı Geliştirmek
 
 Bu belge diyDaw'ı kaynak koddan derlemeyi, testleri çalıştırmayı, yardımcı araçları ve kod
@@ -111,6 +113,7 @@ Kaynak listeleri `CMakeLists.txt` içinde elle tutulur: `daw_engine` (engine/*.c
 | `--snapshot <çıktı.png> [GxY] [dosyalar...]` | Arayüzü pencere açmadan bir PNG'ye çiz ve çık (aşağıya bakın) |
 | `--dialog <ad>` | `--snapshot` ile birlikte: ana pencere yerine bir paneli çiz. Adlar: `export`, `pianoroll`, `synth`, `devices`, `master`, `plugins` |
 | `--show-automation` | `--snapshot` ile birlikte: otomasyonu olan track'lerin otomasyon şeritlerini aç |
+| `--piano-rows <px>` / `--piano-keys <px>` | `--dialog pianoroll` ile birlikte: piano roll satır yüksekliği / klavye genişliği |
 | `--plugin-path <klasör>` | O klasördeki eklentileri hemen tara (snapshot ve export için) |
 
 Terminalde görülen `Cannot connect to server socket` satırları JACK sunucusunun çalışmadığını
@@ -293,7 +296,7 @@ değiştirin):
 Type=Application
 Name=diyDaw
 Comment=Ableton-style DAW
-Exec="/tam/yol/diyDaw/build/DiyDaw_artefacts/Debug/diyDaw" %f
+Exec="/path/to/diyDaw/build/DiyDaw_artefacts/Debug/diyDaw" %f
 Icon=audio-x-generic
 Terminal=false
 Categories=AudioVideo;Audio;Music;
@@ -310,20 +313,17 @@ xdg-mime default diydaw.desktop application/x-diydaw-project
 
 ## 11. Çalışma düzeni: paralel ajanlar
 
-diyDaw, bir ana geliştiricinin (mimari, entegrasyon, inceleme) birden fazla kod yazma ajanıyla
-(Codex, OpenCode) paralel çalışmasıyla geliştirildi. Bu düzen kodun yapısını da etkiledi:
+Paralel çalışan katkıcılar ve kodlama ajanları için iş akışı:
 
-- Bir özelliğe başlamadan önce **arayüzler (header'lar) ve derlenen boş gövdeler (stub)** yazılır;
-  ajanlar bu sözleşmeye karşı çalışır.
-- Her ajan sadece kendisine verilen dosyaları düzenler ve **kendi derleme klasörünü** kullanır
-  (`build-codex-...`, `build-opencode` gibi); bu klasörler `.gitignore`'dadır.
-- Test yazan ajanlar hatayı düzeltmez: hatayı gösteren başarısız bir test bırakır ve hatayı
-  ayrıntılı tarif eder; düzeltme ana geliştiriciye kalır. Bu yöntemle her özellikte birkaç gerçek
-  hata yayından önce yakalandı.
-- Ajan çıktıları birleştirilmeden önce satır satır incelenir; özellikle ses thread'inde bellek
-  ayırma ve nesne ömürleri kontrol edilir.
-- [AGENTS.md](../AGENTS.md) ajanların okuduğu kısa teknik rehberdir; mimari bir değişiklikten
-  sonra güncellenir.
+- Özelliklere başlamadan önce arayüzleri (header'ları) ve derlenebilen boş gövdeleri (stub)
+  tanımlayın; katkıcılar ortak bir sözleşmeye göre çalışsın.
+- Her katkıcı yalnızca kendisine ayrılan dosyaları düzenlesin ve `.gitignore` kapsamındaki
+  kendi derleme klasörünü kullansın (örneğin `build-contributor-a`).
+- Test odaklı katkıcılar hatayı gösteren başarısız bir test ve açık bir hata raporu bıraksın;
+  düzeltmeyi ilgili uygulama sorumlusu yapsın.
+- Birleştirmeden önce değişiklikleri inceleyin; özellikle ses thread'inde bellek ayırma ve nesne
+  ömürlerini kontrol edin.
+- [AGENTS.md](../../AGENTS.md) kısa teknik rehberdir; mimari değiştiğinde güncellenir.
 
 ## 12. Sık karşılaşılan derleme sorunları
 

@@ -18,8 +18,9 @@ fresh clones need `git submodule update --init`).
   tab (`app/devices/DeviceChain`: SynthPanel / DrumRackPanel / plugin panels + effect panels).
   `app/ExportDialog` — Export Audio dialog + background job. `app/plugins` — Plugin Manager and
   plugin editor windows.
-- `docs/` — user and developer documentation (Turkish): user guide, shortcuts, architecture,
-  file format, development. Keep it in sync when behaviour or the file format changes.
+- `docs/` — user and developer documentation in English (user-guide, shortcuts, architecture,
+  file-format, development); Turkish translations in `docs/tr/`. Keep both in sync when
+  behaviour or the file format changes.
 - `examples/` — small projects for snapshots and manual testing (`midi-demo.diydaw`).
 - `tests/` — headless `juce::UnitTest` tests, category `"diyDaw"`, run by `DawEngineTests`.
 

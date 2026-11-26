@@ -1,3 +1,5 @@
+🇬🇧 [English](../shortcuts.md) | 🇹🇷 Türkçe
+
 # diyDaw Kısayolları
 
 Bütün klavye ve fare kısayolları. "Ctrl" Linux'taki Control tuşudur. Ayrıntılı açıklamalar için
@@ -95,6 +97,9 @@ Bütün klavye ve fare kısayolları. "Ctrl" Linux'taki Control tuşudur. Ayrın
 | **Tekerlek** | Perdede kaydırma |
 | **Shift + tekerlek** | Zamanda kaydırma |
 | **Ctrl + tekerlek** | Zoom |
+| **Alt + tekerlek** / **Ctrl + Shift + tekerlek** | Tuş ve nota yüksekliği (dikey zoom) |
+| **−** / **+** (sol üst köşe) | Tuş ve nota yüksekliği |
+| Klavyenin sağ kenarını sürükleme | Klavye genişliği |
 | **Escape** (sürüklerken) | İptal |
 
 ## Otomasyon şeridi

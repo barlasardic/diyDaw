@@ -1,34 +1,36 @@
+🇬🇧 English | 🇹🇷 [Türkçe](README.tr.md)
+
 # diyDaw
 
-**diyDaw**, Linux için sıfırdan yazılmış, Ableton Live'ın arrangement/device mantığını FL Studio'nun
-pattern ve piano roll hissiyle birleştiren bir dijital ses iş istasyonudur (DAW). C++20 ve
-[JUCE 9](https://juce.com) ile yazılmıştır; ses motoru gerçek zamanlı kurallara göre (ses
-thread'inde bellek ayırma, kilit, dosya erişimi yok) tasarlanmıştır.
+**diyDaw** is a digital audio workstation (DAW) written from scratch for Linux. It combines
+Ableton Live's arrangement and device workflow with FL Studio's patterns and piano roll.
+Built with C++20 and [JUCE 9](https://juce.com), its audio engine follows real-time constraints:
+no memory allocation, locks, or file access on the audio thread.
 
-![Arrangement görünümü: MIDI clip'ler, otomasyon şeritleri ve alt panel](docs/images/arrangement.png)
+![Arrangement view: MIDI clips, automation lanes, and the bottom panel](docs/images/arrangement.png)
 
-## Neler yapabilir?
+## Features
 
-| Alan | Özellikler |
+| Area | Features |
 | --- | --- |
-| **Arrangement** | Çok track'li zaman çizelgesi, ses ve MIDI clip'leri, sürükle-bırak ile ses dosyası ekleme, taşıma / kırpma / bölme / çoğaltma / loop, Ableton'daki gibi "üstüne bırakılan clip alttakini keser" kuralı, ızgaraya yapışma, zoom, playhead takibi |
-| **MIDI** | MIDI track'leri, piano roll (nota çizme, taşıma, uzatma, velocity şeridi, sağ tıkla silme), bilgisayar klavyesiyle ve MIDI klavyeyle canlı çalma |
-| **Enstrümanlar** | 16 sesli dahili synth (2 osilatör, rezonanslı filtre, iki envelope), 16 pad'li drum rack ve programın içinde sentezlenen hazır davul kiti, VST3 / LV2 enstrüman eklentileri |
-| **Efektler** | EQ Three, Compressor, Reverb, Delay (tempoya senkron, ping-pong); her track'te ve master'da efekt zinciri; VST3 / LV2 efekt eklentileri |
-| **Otomasyon** | Volume, pan ve her cihaz parametresi için zarf (envelope) çizimi; otomasyonlu düğmeler kırmızıya döner ve eğriyi takip eder |
-| **Çalma** | Song modu ve FL tarzı Pattern modu (açık clip'i tek başına döngüde çalar), metronom, sürüklenebilir şarkı konum çubuğu |
-| **Mikser** | Kanal şeritleri (pan, aç/kapa, solo, fader, seviye ölçer), master şeridi |
-| **Dosyalar** | `.diydaw` proje dosyası (XML), proje klasörü taşınsa da ses dosyalarını bulan göreli yollar, 16/24/32-bit WAV export (normalize, efekt kuyruğu) |
-| **Geri alma** | Neredeyse her düzenleme Ctrl+Z ile geri alınabilir; bir fare hareketi = bir geri alma adımı |
+| **Arrangement** | Multitrack timeline, audio and MIDI clips, drag-and-drop audio import, move / trim / split / duplicate / loop, Ableton-style overlap handling that cuts underlying clips, grid snapping, zoom, playhead follow |
+| **MIDI** | MIDI tracks, piano roll (draw, move, and resize notes, velocity lane, right-click deletion), live playing from a computer keyboard or MIDI keyboard |
+| **Instruments** | Built-in 16-voice synth (2 oscillators, resonant filter, two envelopes), 16-pad drum rack with a kit synthesized inside the app, VST3 / LV2 instrument plugins |
+| **Effects** | EQ Three, Compressor, Reverb, Delay (tempo sync, ping-pong); effect chains on every track and the master; VST3 / LV2 effect plugins |
+| **Automation** | Draw envelopes for volume, pan, and every built-in device parameter; automated controls turn red and follow the envelope |
+| **Playback** | Song mode and FL-style Pattern mode (loops the open clip on its own), metronome, draggable song position bar |
+| **Mixer** | Channel strips (pan, activator, solo, fader, level meter), master strip |
+| **Files** | XML `.diydaw` projects, relative paths that keep audio files accessible when a project folder moves, 16/24/32-bit WAV export (normalization, effect tails) |
+| **Undo** | Almost every edit can be undone with Ctrl+Z; one mouse gesture = one undo step |
 
-## Hızlı başlangıç
+## Quick start
 
 ```bash
-# 1. Kaynak kodu JUCE ile birlikte indir
+# 1. Clone the source, including JUCE
 git clone --recursive https://github.com/barlasardic/diyDaw.git
 cd diyDaw
 
-# 2. Gerekli paketler (Ubuntu / Debian)
+# 2. Install dependencies (Ubuntu / Debian)
 sudo apt install build-essential cmake ninja-build \
     libasound2-dev libjack-jackd2-dev \
     libfreetype-dev libfontconfig1-dev \
@@ -36,49 +38,51 @@ sudo apt install build-essential cmake ninja-build \
     libxinerama-dev libxrandr-dev libxrender-dev libxi-dev \
     libegl-dev libglu1-mesa-dev mesa-common-dev
 
-# 3. Derle
+# 3. Build
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 
-# 4. Çalıştır (örnek bir projeyle)
+# 4. Run with an example project
 ./build/DiyDaw_artefacts/Debug/diyDaw examples/midi-demo.diydaw
 ```
 
-Testleri çalıştırmak için:
+Run the tests:
 
 ```bash
 cmake --build build --target DawEngineTests
-./build/DawEngineTests_artefacts/Debug/DawEngineTests     # "ALL TESTS PASSED" yazmalı
+./build/DawEngineTests_artefacts/Debug/DawEngineTests     # Should print "ALL TESTS PASSED"
 ```
 
-## Dokümantasyon
+## Documentation
 
-| Belge | İçerik |
+| Document | Contents |
 | --- | --- |
-| [Kullanım kılavuzu](docs/kullanim-kilavuzu.md) | Arayüzün tamamı, adım adım: track'ler, clip'ler, piano roll, synth, drum rack, efektler, otomasyon, pattern modu, eklentiler, export |
-| [Kısayollar](docs/kisayollar.md) | Bütün klavye ve fare kısayolları tek sayfada |
-| [Mimari](docs/mimari.md) | Programın iç yapısı: katmanlar, thread'ler, veri akışı, ses motoru, model, eklenti barındırma |
-| [Proje dosyası formatı](docs/dosya-formati.md) | `.diydaw` dosyasının ayrıntılı tanımı |
-| [Geliştirme](docs/gelistirme.md) | Derleme, testler, yardımcı araçlar, kod kuralları, yeni bir efekt eklemek |
-| [AGENTS.md](AGENTS.md) | Kod üzerinde çalışan geliştiriciler ve yapay zekâ ajanları için kısa teknik rehber (İngilizce) |
+| [User guide](docs/user-guide.md) | A step-by-step tour: tracks, clips, piano roll, synth, drum rack, effects, automation, patterns, plugins, export |
+| [Shortcuts](docs/shortcuts.md) | All keyboard and mouse shortcuts on one page |
+| [Architecture](docs/architecture.md) | Layers, threads, data flow, audio engine, model, plugin hosting |
+| [Project file format](docs/file-format.md) | Detailed `.diydaw` format reference |
+| [Development](docs/development.md) | Building, tests, tools, coding conventions, adding an effect |
+| [AGENTS.md](AGENTS.md) | A short technical guide for contributors and coding agents |
 
-## Ekran görüntüleri
+Türkçe: [README.tr.md](README.tr.md)
+
+## Screenshots
 
 | | |
 | --- | --- |
 | ![Piano roll](docs/images/piano-roll.png) | ![Drum rack](docs/images/drum-rack.png) |
-| Piano roll: notalar, velocity şeridi, loop bölgesi | Drum rack: 16 pad ve seçili pad'in ayarları |
-| ![Efekt zinciri](docs/images/device-chain.png) | ![Plugin yöneticisi](docs/images/plugin-manager.png) |
-| Synth ve efekt zinciri | VST3 / LV2 eklenti yöneticisi |
+| Piano roll: notes, velocity lane, loop region | Drum rack: 16 pads and selected-pad controls |
+| ![Device chain](docs/images/device-chain.png) | ![Plugin Manager](docs/images/plugin-manager.png) |
+| Synth and effect chain | VST3 / LV2 Plugin Manager |
 
-## Durum
+## Status
 
-diyDaw aktif geliştirme altındadır. Çalışan bir DAW'ın temel parçaları yerindedir, ama henüz
-şunlar yoktur: otomasyon kaydı, eklenti parametrelerinin otomasyonu, eklenti gecikme telafisi,
-ses clip'lerinde tempo uydurma (warp), session view, ses kaydı (mikrofon / line-in). Ayrıntılar için
-kullanım kılavuzundaki [Bilinen sınırlar](docs/kullanim-kilavuzu.md#bilinen-sınırlar) bölümüne bakın.
+diyDaw is under active development. The core parts of a working DAW are in place, but automation
+recording, plugin parameter automation, plugin latency compensation, audio time stretching
+(warp), a session view, and microphone / line-in recording are not yet available. See
+[Known limitations](docs/user-guide.md#known-limitations) in the user guide for details.
 
-## Lisans
+## License
 
-Henüz bir lisans dosyası eklenmedi. JUCE kendi lisansıyla (AGPLv3 veya ticari) dağıtılır;
-diyDaw'ı dağıtmadan önce JUCE lisans koşullarını gözden geçirin.
+No license file has been added yet. JUCE is dual-licensed under the AGPLv3 or a commercial
+license, so the project's license must be compatible with the applicable JUCE license terms.

@@ -1,3 +1,5 @@
+🇬🇧 [English](../user-guide.md) | 🇹🇷 Türkçe
+
 # diyDaw Kullanım Kılavuzu
 
 Bu kılavuz diyDaw'ı ilk kez açan birinin bilmesi gereken her şeyi, ekranın üstünden altına doğru
@@ -57,7 +59,7 @@ diyDaw'da bir müzik projesi şu parçalardan oluşur:
 
 ## 2. Ekranın genel düzeni
 
-![Ana pencere](images/arrangement.png)
+![Ana pencere](../images/arrangement.png)
 
 Yukarıdan aşağı:
 
@@ -214,7 +216,7 @@ Hepsi tek bir Ctrl+Z ile geri alınır.
 
 ## 7. Ses dosyaları ve ses clip'leri
 
-![Ses clip'leri](images/audio-clips.png)
+![Ses clip'leri](../images/audio-clips.png)
 
 - Dosya yöneticisinden bir ya da birkaç ses dosyasını (WAV, AIFF, FLAC, OGG Vorbis; MP3 henüz
   desteklenmiyor) bir audio
@@ -238,7 +240,7 @@ kayabilir.
 
 ## 8. MIDI clip'leri ve piano roll
 
-![Piano roll](images/piano-roll.png)
+![Piano roll](../images/piano-roll.png)
 
 Bir MIDI clip'e çift tıkladığında alt panelin **Clip** sekmesinde piano roll açılır.
 
@@ -282,6 +284,26 @@ Notaları eklerken ve taşırken nota sesi duyulur, böylece doğru perdeyi bulm
 | **Tekerlek** | Perdede yukarı-aşağı kaydırma |
 | **Shift + tekerlek** | Zamanda kaydırma |
 | **Ctrl + tekerlek** | Zamanda zoom |
+| **Alt + tekerlek** (ya da **Ctrl + Shift + tekerlek**) | Tuşları ve notaları uzat / kısalt (dikey zoom, FL gibi) |
+| Sol üst köşedeki **−** / **+** | Aynısı, görünümün ortasına göre |
+| Klavyenin sağ kenarını sürükleme | Klavyeyi genişlet / daralt |
+
+### Tuş ve nota boyutu
+
+FL Studio'daki gibi tuşların ve notaların boyutu ayarlanabilir; böylece nota yazmak kolaylaşır:
+
+- **Satır yüksekliği** (bir tuş / bir nota satırı) 6 ile 40 piksel arasıdır (varsayılan 12).
+  Klavyenin ya da ızgaranın üzerinde **Alt + tekerlek** kullan: farenin altındaki nota yerinde
+  kalır. Klavyenin üstündeki **−** / **+** düğmeleri aynı işi fareyle yapar. Bazı masaüstleri
+  Alt + tekerleği kendine ayırır; **Ctrl + Shift + tekerlek** de çalışır.
+- **Klavye genişliği** 40 ile 200 piksel arasıdır (varsayılan 56): klavye ile notalar arasındaki
+  çizgiyi sürükle (imleç ↔ olur).
+- Satırlar uzayınca sadece C'lerin değil her beyaz tuşun adı (D3, E3, ...) yazar, drum track'lerde
+  pad isimleri büyür. Nota blokları adlarını (perde ya da drum track'lerde pad adı) notanın içine
+  sığıyorsa gösterir.
+- İki boyut da bütün clip'lerde geçerlidir ve uygulama ayarlarında saklanır.
+
+![Uzun satırlı ve geniş klavyeli piano roll](../images/piano-roll-large.png)
 
 Piano roll açıldığında görünüm notaları ortalayacak şekilde ve bütün loop'u gösterecek şekilde
 ayarlanır. Çalarken playhead piano roll'da da görünür; loop'lu clip'lerde içerik zamanına göre
@@ -334,7 +356,7 @@ Cihaz zinciri ekrana sığmazsa altta yatay bir kaydırma çubuğu çıkar.
 
 ## 11. Synth
 
-![Synth ve efekt zinciri](images/device-chain.png)
+![Synth ve efekt zinciri](../images/device-chain.png)
 
 Her yeni MIDI track dahili synth ile gelir: 16 sesli (aynı anda 16 nota), "subtractive"
 (çıkarımlı) bir synth. Ses akışı: **iki osilatör → karıştırıcı → rezonanslı alçak geçiren filtre →
@@ -368,7 +390,7 @@ Synth yerine başka bir enstrüman kullanmak için synth panelinin başlığınd
 
 ## 12. Drum rack
 
-![Drum rack](images/drum-rack.png)
+![Drum rack](../images/drum-rack.png)
 
 Drum rack, notaları sample (kayıtlı ses) çalan 16 **pad**'e dağıtan bir enstrümandır.
 **+ Drums** düğmesiyle eklenen track hazır kitle gelir.
@@ -416,7 +438,7 @@ fazlası en eskisini yumuşakça keser.
 
 ### Drum track'te piano roll
 
-![Drum piano roll](images/drum-piano-roll.png)
+![Drum piano roll](../images/drum-piano-roll.png)
 
 Drum track'lerde piano roll'un klavyesinde nota isimleri yerine **pad isimleri** (Kick, Snare,
 Closed Hat...) yazar ve görünüm pad'lerin olduğu bölgede açılır. Notanın uzunluğu önemsizdir;
@@ -496,7 +518,7 @@ Süre değişince yankı "zıplamaz", yumuşakça kayar. En uzun yankı aralığ
 
 ## 14. Master kanalı
 
-![Master efektleri](images/master.png)
+![Master efektleri](../images/master.png)
 
 Bütün track'ler master kanalında toplanır. Sıra: **track'lerin toplamı → master efektleri →
 master fader → seviye ölçer**. Metronom master fader'dan sonra eklenir, yani master seviyesinden
@@ -594,7 +616,7 @@ diyDaw, Linux'ta çalışan **VST3** ve **LV2** eklentilerini enstrüman ve efek
 
 ### Eklenti yöneticisi
 
-![Plugin yöneticisi](images/plugin-manager.png)
+![Plugin yöneticisi](../images/plugin-manager.png)
 
 **File → Plugins...** ile açılır.
 
@@ -613,7 +635,7 @@ Liste boşsa program kendiliğinden tarama yapmaz; ilk seferde **Scan**'e basman
 
 ### Eklenti eklemek
 
-![Eklenti cihazları](images/plugin-devices.png)
+![Eklenti cihazları](../images/plugin-devices.png)
 
 - **Efekt:** Device sekmesinde **+ Add Effect → Plugins → (üretici) → (eklenti)**.
 - **Enstrüman:** MIDI track'in ilk cihazının başlığındaki açılır menüden **Plugins → ...**
@@ -697,7 +719,7 @@ Dosya formatının ayrıntıları için [dosya-formati.md](dosya-formati.md) bel
 
 ## 20. Ses olarak dışa aktarma (export)
 
-![Export penceresi](images/export-dialog.png)
+![Export penceresi](../images/export-dialog.png)
 
 **File → Export Audio...** (Ctrl+Shift+R):
 

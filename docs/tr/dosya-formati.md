@@ -1,3 +1,5 @@
+🇬🇧 [English](../file-format.md) | 🇹🇷 Türkçe
+
 # `.diydaw` Proje Dosyası Formatı
 
 Bir diyDaw projesi tek bir UTF-8 **XML** dosyasıdır (uzantı `.diydaw`). Dosya, programın bellekte
@@ -243,7 +245,7 @@ Program dosyayı açarken şunları yapar; elle yazılmış ya da bozuk dosyalar
     </CLIP>
   </TRACK>
   <TRACK kind="audio" name="Vocal">
-    <CLIP kind="audio" name="vocal" file="/home/kullanici/Music/proje/vocal.wav"
+    <CLIP kind="audio" name="vocal" file="/path/to/project/vocal.wav"
           relativeFile="vocal.wav" start="8" length="16" offset="0" loop="0"/>
   </TRACK>
   <MASTER>

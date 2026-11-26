@@ -1,9 +1,11 @@
+🇬🇧 [English](../architecture.md) | 🇹🇷 Türkçe
+
 # diyDaw Mimarisi
 
 Bu belge diyDaw'ın iç yapısını anlatır: kodun hangi katmanlara ayrıldığını, hangi thread'in
 neyi yaptığını, bir fare hareketinin hoparlöre kadar nasıl ulaştığını ve ses motorunun gerçek
 zamanlı kurallarını. Kodla çalışacak herkes için yazılmıştır. Kısa ve İngilizce bir özet için
-[AGENTS.md](../AGENTS.md) dosyasına da bakın.
+[AGENTS.md](../../AGENTS.md) dosyasına da bakın.
 
 **İçindekiler**
 
