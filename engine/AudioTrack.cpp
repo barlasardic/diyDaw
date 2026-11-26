@@ -11,6 +11,8 @@ void AudioTrack::prepare (double sampleRate, int maxBlockSize)
 {
     synth.prepare (sampleRate, maxBlockSize);
     synth.reset();
+    drumRack.prepare (sampleRate, maxBlockSize);
+    drumRack.reset();
 
     if (auto* chain = effects.acquire()) // audio is stopped while preparing
         for (auto& e : chain->effects)
@@ -86,6 +88,17 @@ void AudioTrack::renderClip (const Clip& clip, const Transport::Block& block, in
     }
 }
 
+Instrument* AudioTrack::getInstrument() noexcept
+{
+    switch (getInstrumentType())
+    {
+        case InstrumentType::synth:    return &synth;
+        case InstrumentType::drumRack: return &drumRack;
+        case InstrumentType::none:     break;
+    }
+    return nullptr;
+}
+
 void AudioTrack::applyAutomation (const Transport::Block& block) noexcept
 {
     const auto* list = automation.acquire();
@@ -103,7 +116,7 @@ void AudioTrack::applyAutomation (const Transport::Block& block) noexcept
         {
             case AutomationLane::Target::trackGain:   setGainDb (value); break;
             case AutomationLane::Target::trackPan:    setPan (value); break;
-            case AutomationLane::Target::synthParam:  synth.setParam (lane.paramIndex, value); break;
+            case AutomationLane::Target::synthParam:  if (auto* i = getInstrument()) i->setParam (lane.paramIndex, value); break;
             case AutomationLane::Target::effectParam: if (lane.effect != nullptr) lane.effect->setParam (lane.paramIndex, value); break;
         }
     }
@@ -132,7 +145,16 @@ void AudioTrack::process (juce::AudioBuffer<float>& mixBus, const Transport::Blo
         }
     }
 
-    if (instrumentEnabled.load (std::memory_order_relaxed))
+    if (const auto type = instrumentType.load (std::memory_order_relaxed); type != lastInstrumentType)
+    {
+        // Switched instrument: silence the old one and forget its sounding notes.
+        if (lastInstrumentType == (int) InstrumentType::synth)    synth.reset();
+        if (lastInstrumentType == (int) InstrumentType::drumRack) drumRack.reset();
+        noteEndBeat.fill (-1.0);
+        lastInstrumentType = type;
+    }
+
+    if (lastInstrumentType != (int) InstrumentType::none)
         renderInstrument (list, block, n);
 
     if (auto* chain = effects.acquire())
@@ -351,7 +373,10 @@ void AudioTrack::renderInstrument (const ClipList* list, const Transport::Block&
         numEvents += numLive;
     }
 
-    synth.process (scratch, n, events.data(), numEvents);
+    // The instrument this block was set up for (not a fresh atomic read, which could differ).
+    Instrument* instrument = lastInstrumentType == (int) InstrumentType::drumRack ? static_cast<Instrument*> (&drumRack)
+                                                                                 : static_cast<Instrument*> (&synth);
+    instrument->process (scratch, n, events.data(), numEvents);
 }
 
 } // namespace daw

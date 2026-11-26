@@ -1,5 +1,7 @@
 #include "Project.h"
 
+#include "BuiltinSamples.h"
+
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -164,24 +166,93 @@ namespace
     }
 }
 
-juce::ValueTree Project::makeDevice()
+namespace
+{
+    juce::Identifier padFileId (int pad) { return juce::Identifier ("pad" + juce::String (pad + 1) + "File"); }
+}
+
+juce::ValueTree Project::makeDevice (const juce::String& type)
 {
     juce::ValueTree device (ids::DEVICE);
-    device.setProperty (ids::type, "synth", nullptr);
+    device.setProperty (ids::type, type, nullptr);
 
-    for (const auto& info : Synth::getParamInfos())
+    for (const auto& info : getDeviceParamInfos (device))
         if (info.id != nullptr)
             device.setProperty (info.id, (double) info.defaultValue, nullptr);
+
+    if (type == "drumrack")
+    {
+        // The builtin kit, General MIDI-like; the two hi-hats choke each other.
+        const auto& names = getBuiltinSampleNames();
+        for (int pad = 0; pad < juce::jmin (DrumRack::numPads, names.size()); ++pad)
+            device.setProperty (padFileId (pad), builtinSampleKey (names[pad]), nullptr);
+
+        for (const auto& hat : { "closedHat", "openHat" })
+            if (const auto pad = names.indexOf (hat); pad >= 0)
+                device.setProperty (DrumRack::getParamInfos()[(size_t) DrumRack::paramIndex (pad, DrumRack::choke)].id, 1.0, nullptr);
+    }
 
     return device;
 }
 
+juce::String Project::getPadSampleKey (const juce::ValueTree& drumRack, int pad)
+{
+    return drumRack[padFileId (pad)].toString();
+}
+
+juce::String Project::getPadName (const juce::ValueTree& drumRack, int pad)
+{
+    const auto key = getPadSampleKey (drumRack, pad);
+    if (key.isEmpty())
+        return {};
+
+    if (isBuiltinSampleKey (key))
+    {
+        // "closedHat" -> "Closed Hat"
+        juce::String name;
+        for (auto c : builtinSampleName (key))
+        {
+            if (juce::CharacterFunctions::isUpperCase (c))
+                name << ' ';
+            name << juce::String::charToString (c);
+        }
+        return name.substring (0, 1).toUpperCase() + name.substring (1);
+    }
+
+    return juce::File (key).getFileNameWithoutExtension();
+}
+
+void Project::setPadSample (juce::ValueTree drumRack, int pad, const juce::String& sampleKey)
+{
+    if (getDeviceType (drumRack) != "drumrack" || pad < 0 || pad >= DrumRack::numPads)
+        return;
+
+    if (sampleKey.isEmpty())
+        drumRack.removeProperty (padFileId (pad), &undoManager);
+    else
+        drumRack.setProperty (padFileId (pad), sampleKey, &undoManager);
+}
+
+void Project::syncDrumKit (const juce::ValueTree& track)
+{
+    const auto device = getDevice (track);
+    if (getDeviceType (device) != "drumrack" || indexOfTrack (track) < 0)
+        return;
+
+    auto kit = std::make_unique<DrumRack::Kit>();
+    for (int pad = 0; pad < DrumRack::numPads; ++pad)
+        if (const auto key = getPadSampleKey (device, pad); key.isNotEmpty())
+            kit->samples[(size_t) pad] = pool.get (key); // builtins are created on demand
+
+    getEngineTrack (track).getDrumRack().setKit (std::move (kit));
+}
+
 juce::ValueTree Project::makeTrack (int number, TrackKind trackKind)
 {
-    const auto midi = trackKind == TrackKind::midi;
+    const auto midi = trackKind != TrackKind::audio;
     juce::ValueTree track (ids::TRACK);
     track.setProperty (ids::kind, midi ? "midi" : "audio", nullptr);
-    track.setProperty (ids::name, juce::String (number) + (midi ? " MIDI" : " Audio"), nullptr);
+    track.setProperty (ids::name, juce::String (number) + (trackKind == TrackKind::drums ? " Drums" : midi ? " MIDI" : " Audio"), nullptr);
     track.setProperty (ids::colour, trackPalette[(size_t) (number - 1) % std::size (trackPalette)].toString(), nullptr);
     track.setProperty (ids::gain, 0.0, nullptr);
     track.setProperty (ids::pan, 0.0, nullptr);
@@ -189,7 +260,7 @@ juce::ValueTree Project::makeTrack (int number, TrackKind trackKind)
     track.setProperty (ids::solo, false, nullptr);
 
     if (midi)
-        track.appendChild (makeDevice(), nullptr);
+        track.appendChild (makeDevice (trackKind == TrackKind::drums ? "drumrack" : "synth"), nullptr);
 
     return track;
 }
@@ -242,7 +313,7 @@ juce::String Project::replaceContents (const juce::ValueTree& newState)
         for (int i = 0; i < track.getNumChildren(); ++i)
         {
             const auto child = track.getChild (i);
-            const auto isSynth = child.hasType (ids::DEVICE) && getDeviceType (child) == "synth";
+            const auto isSynth = child.hasType (ids::DEVICE) && isInstrumentType (getDeviceType (child));
             const auto keep = (child.hasType (ids::CLIP) && isMidiClip (child) == midi)
                            || (midi && isSynth && ! haveDevice)
                            || (isEffect (child) && getEffectTypes().contains (getDeviceType (child)))
@@ -360,6 +431,14 @@ juce::Result Project::saveTo (const juce::File& file)
         for (auto clip : track)
             if (isClip (clip) && ! isMidiClip (clip))
                 clip.setProperty (ids::relativeFile, getClipFile (clip).getRelativePathFrom (folder), nullptr);
+
+        // Drum pads: like clips, also store the path relative to the project file.
+        for (auto device : track)
+            if (getDeviceType (device) == "drumrack")
+                for (int pad = 0; pad < DrumRack::numPads; ++pad)
+                    if (const auto key = getPadSampleKey (device, pad); key.isNotEmpty() && ! isBuiltinSampleKey (key))
+                        device.setProperty ("pad" + juce::String (pad + 1) + "RelativeFile",
+                                            juce::File (key).getRelativePathFrom (folder), nullptr);
     }
 
     writeDoublesExactly (copy);
@@ -415,6 +494,31 @@ juce::Result Project::loadFrom (const juce::File& file)
             clip.setProperty (ids::file, SamplePool::keyFor (sampleFile), nullptr);
             clip.removeProperty (ids::relativeFile, nullptr);
             files.addIfNotAlreadyThere (sampleFile);
+        }
+
+        for (auto device : track)
+        {
+            if (getDeviceType (device) != "drumrack")
+                continue;
+
+            for (int pad = 0; pad < DrumRack::numPads; ++pad)
+            {
+                const juce::Identifier relativeId ("pad" + juce::String (pad + 1) + "RelativeFile");
+                const auto key = getPadSampleKey (device, pad);
+                const auto relative = device[relativeId].toString();
+                device.removeProperty (relativeId, nullptr);
+
+                if (key.isEmpty() || isBuiltinSampleKey (key) || ! juce::File::isAbsolutePath (key))
+                    continue;
+
+                auto sampleFile = juce::File (key);
+                if (! sampleFile.existsAsFile() && relative.isNotEmpty())
+                    if (const auto candidate = file.getParentDirectory().getChildFile (relative); candidate.existsAsFile())
+                        sampleFile = candidate;
+
+                device.setProperty (padFileId (pad), SamplePool::keyFor (sampleFile), nullptr);
+                files.addIfNotAlreadyThere (sampleFile);
+            }
         }
     }
 
@@ -554,7 +658,7 @@ void Project::setTrackSolo (juce::ValueTree track, bool shouldSolo)
 juce::ValueTree Project::getDevice (const juce::ValueTree& track)
 {
     for (const auto& child : track)
-        if (child.hasType (ids::DEVICE) && getDeviceType (child) == "synth")
+        if (child.hasType (ids::DEVICE) && isInstrumentType (getDeviceType (child)))
             return child;
 
     return {};
@@ -566,6 +670,9 @@ const std::vector<ParamInfo>& Project::getDeviceParamInfos (const juce::ValueTre
 
     if (getDeviceType (device) == "synth")
         return synthInfos;
+
+    if (getDeviceType (device) == "drumrack")
+        return DrumRack::getParamInfos();
 
     return getEffectParamInfos (getDeviceType (device));
 }
@@ -741,12 +848,18 @@ void Project::syncDevice (const juce::ValueTree& track)
         return;
 
     auto& t = getEngineTrack (track);
-    t.setInstrumentEnabled (isMidiTrack (track));
+    const auto instrumentDevice = getDevice (track);
+    const auto drums = getDeviceType (instrumentDevice) == "drumrack";
 
-    if (isMidiTrack (track))
-        for (int i = 0; i < Synth::numParams; ++i)
-            t.getSynth().setParam (i, getDeviceParam (track, i));
+    t.setInstrumentType (! isMidiTrack (track) ? AudioTrack::InstrumentType::none
+                         : drums               ? AudioTrack::InstrumentType::drumRack
+                                               : AudioTrack::InstrumentType::synth);
 
+    if (auto* instrument = t.getInstrument())
+        for (int i = 0; i < (int) getDeviceParamInfos (instrumentDevice).size(); ++i)
+            instrument->setParam (i, getDeviceParam (instrumentDevice, i));
+
+    syncDrumKit (track);
     syncEffects (track);
 }
 
@@ -1197,7 +1310,7 @@ float Project::getEngineValue (const juce::ValueTree& track, const juce::String&
             continue;
 
         if (! isEffect (device))
-            return engineTrack.getSynth().getParam (i);
+            return engineTrack.getInstrument() != nullptr ? engineTrack.getInstrument()->getParam (i) : 0.0f;
 
         if (const auto instance = getEffectInstance (device))
             return instance->getParam (i);
@@ -1299,7 +1412,10 @@ void Project::syncAutomation (const juce::ValueTree& track)
             if (instance != nullptr)
                 instance->setParam (i, getDeviceParam (device, i));
             else if (! isEffect (device))
-                engineTrack.getSynth().setParam (i, getDeviceParam (device, i));
+            {
+                if (auto* instrument = engineTrack.getInstrument())
+                    instrument->setParam (i, getDeviceParam (device, i));
+            }
         }
     }
 
@@ -1415,7 +1531,10 @@ void Project::syncTrack (const juce::ValueTree& track)
 void Project::syncAllTracks()
 {
     for (const auto& t : state)
+    {
         syncTrack (t);
+        syncDrumKit (t);
+    }
 }
 
 void Project::valueTreePropertyChanged (juce::ValueTree& tree, const juce::Identifier& property)
@@ -1442,6 +1561,9 @@ void Project::valueTreePropertyChanged (juce::ValueTree& tree, const juce::Ident
         if (property == ids::enabled && instance != nullptr)
             instance->setEnabled (isEffectEnabled (tree));
 
+        if (property.toString().startsWith ("pad") && property.toString().endsWith ("File"))
+            syncDrumKit (track);
+
         for (int i = 0; i < (int) infos.size(); ++i)
         {
             if (infos[(size_t) i].id == nullptr || property != juce::Identifier (infos[(size_t) i].id))
@@ -1450,7 +1572,10 @@ void Project::valueTreePropertyChanged (juce::ValueTree& tree, const juce::Ident
             if (instance != nullptr)
                 instance->setParam (i, getDeviceParam (tree, i));
             else if (! isEffect (tree))
-                getEngineTrack (track).getSynth().setParam (i, getDeviceParam (tree, i));
+            {
+                if (auto* instrument = getEngineTrack (track).getInstrument())
+                    instrument->setParam (i, getDeviceParam (tree, i));
+            }
         }
     }
     else if (tree.hasType (ids::TRACK))

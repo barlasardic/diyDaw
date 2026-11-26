@@ -39,6 +39,17 @@ their per-track components from ValueTree child-added/removed callbacks.
   Device; A W S E D F T G Y H U J K play notes, Z/X octave, C/V velocity (no modifiers).
 - Double-click empty space on a MIDI lane creates a one-bar clip; double-click a clip opens it.
 
+## Drum rack
+- A drum track is a MIDI track whose instrument DEVICE has type "drumrack" (`TrackKind::drums`,
+  `Project::isDrumTrack`). `engine/DrumRack.h`: 16 one-shot pads on notes 36..51 with per-pad
+  gain/pan/tune/decay/choke params (automatable like any device param). Pad samples are SamplePool
+  keys in `pad<N>File` properties; `builtin:<name>` keys are synthesised drum sounds
+  (`engine/BuiltinSamples.h`) created on demand by `SamplePool::get`.
+- `AudioTrack::InstrumentType` selects the synth or the drum rack; automation of instrument
+  params goes to whichever is active.
+- UI: `app/devices/DrumRackPanel` (pads, drop samples, per-pad controls); the piano roll shows
+  pad names on drum tracks. "+ Drums" / Ctrl+Alt+T creates a drum track.
+
 ## Effects, loop and pattern mode
 - Insert effects (`engine/AudioEffect.h`, `engine/Effects.h`: EQ Three, Compressor, Reverb,
   Delay) are effect `DEVICE`s on any track, after the instrument, before the fader. The model

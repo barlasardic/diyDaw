@@ -1,4 +1,5 @@
 #include "SamplePool.h"
+#include "BuiltinSamples.h"
 
 namespace daw
 {
@@ -16,8 +17,14 @@ SamplePool::~SamplePool()
 
 SamplePool::Ptr SamplePool::get (const juce::String& key) const
 {
-    const auto it = samples.find (key);
-    return it != samples.end() ? it->second : nullptr;
+    if (const auto it = samples.find (key); it != samples.end())
+        return it->second;
+
+    if (isBuiltinSampleKey (key))
+        if (auto sample = createBuiltinSample (builtinSampleName (key)))
+            return samples[key] = std::move (sample);
+
+    return nullptr;
 }
 
 void SamplePool::insert (const juce::String& key, Ptr sample)

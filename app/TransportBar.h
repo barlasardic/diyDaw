@@ -28,6 +28,7 @@ public:
     void setPatternMode (bool isPattern);
     std::function<void()> onAddTrack;
     std::function<void()> onAddMidiTrack;
+    std::function<void()> onAddDrumTrack;
     std::function<void()> onAudioSettings;
     std::function<void()> onToggleView;
 
@@ -56,6 +57,7 @@ private:
     juce::Label positionLabel;
     juce::TextButton addTrackButton { "+ Audio" };
     juce::TextButton addMidiTrackButton { "+ MIDI" };
+    juce::TextButton addDrumTrackButton { "+ Drums" };
     juce::TextButton settingsButton { "Audio..." };
     juce::TextButton viewButton { "Mixer" };
 

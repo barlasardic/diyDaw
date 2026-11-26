@@ -25,6 +25,7 @@ MainComponent::MainComponent()
     addAndMakeVisible (positionBar);
     transportBar.onAddTrack = [this] { addTrack(); };
     transportBar.onAddMidiTrack = [this] { addMidiTrack(); };
+    transportBar.onAddDrumTrack = [this] { addDrumTrack(); };
     transportBar.onAudioSettings = [this] { showAudioSettings(); };
     transportBar.onToggleView = [this] { setShowingMixer (! showingMixer); };
     addAndMakeVisible (transportBar);
@@ -190,6 +191,13 @@ void MainComponent::timerCallback()
 void MainComponent::addTrack()
 {
     selectTrack (project.addTrack()); // syncStrips() runs from the ValueTree listener
+}
+
+void MainComponent::addDrumTrack()
+{
+    const auto track = project.addTrack ({}, Project::TrackKind::drums);
+    selectTrack (track);
+    detail.setTab (DetailView::Tab::device);
 }
 
 void MainComponent::addMidiTrack()
@@ -777,7 +785,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
 
     if (mods.isCommandDown() && key.getKeyCode() == 'T')
     {
-        mods.isShiftDown() ? addMidiTrack() : addTrack();
+        if (mods.isAltDown())
+            addDrumTrack();
+        else
+            mods.isShiftDown() ? addMidiTrack() : addTrack();
         return true;
     }
 

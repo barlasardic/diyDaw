@@ -29,7 +29,8 @@ public:
 
     static juce::String keyFor (const juce::File& file) { return file.getFullPathName(); }
 
-    /** The decoded sample, or nullptr if it isn't loaded (yet). */
+    /** The decoded sample, or nullptr if it isn't loaded (yet). Builtin keys ("builtin:<name>",
+        see engine/BuiltinSamples.h) are synthesised on first use. */
     Ptr get (const juce::String& key) const;
     Ptr get (const juce::File& file) const { return get (keyFor (file)); }
 
@@ -55,7 +56,7 @@ private:
     void finishLoad (const juce::String& key, Ptr sample);
 
     juce::AudioFormatManager formats;
-    std::map<juce::String, Ptr> samples;
+    mutable std::map<juce::String, Ptr> samples; // mutable: builtins are created on demand
     std::map<juce::String, std::vector<Callback>> pending;
     juce::ThreadPool decoders { juce::ThreadPoolOptions{}.withNumberOfThreads (2) };
 

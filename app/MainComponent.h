@@ -74,6 +74,7 @@ private:
 
     void addTrack();
     void addMidiTrack();
+    void addDrumTrack();
 
     // FL-style pattern mode: loop only the MIDI clip open in the piano roll (or last selected).
     void setPatternMode (bool shouldBeOn);

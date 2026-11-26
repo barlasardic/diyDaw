@@ -50,8 +50,8 @@ public:
     ~Synth() override;
 
     // ---- any thread -----------------------------------------------------------
-    void setParam (int index, float value) noexcept;  // clamped (and rounded if stepped)
-    float getParam (int index) const noexcept;
+    void setParam (int index, float value) noexcept override;  // clamped (and rounded if stepped)
+    float getParam (int index) const noexcept override;
 
     // ---- Instrument (audio thread) --------------------------------------------
     void prepare (double sampleRate, int maxBlockSize) override;

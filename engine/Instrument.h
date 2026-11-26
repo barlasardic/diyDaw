@@ -36,6 +36,11 @@ public:
 
     /** Silences everything immediately (e.g. on a transport jump). */
     virtual void reset() noexcept = 0;
+
+    /** Parameters, indexed like the instrument's ParamInfo list. Any thread (atomics);
+        values are clamped (and rounded if stepped). */
+    virtual void setParam (int index, float value) noexcept = 0;
+    virtual float getParam (int index) const noexcept = 0;
 };
 
 } // namespace daw

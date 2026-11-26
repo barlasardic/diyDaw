@@ -38,6 +38,12 @@ DetailView::DetailView (Project& p) : project (p), pianoRoll (p), deviceChain (p
             onPreviewNote (pitch, velocity, on);
     };
 
+    deviceChain.onPreviewNote = [this] (int pitch, float velocity, bool on)
+    {
+        if (onPreviewNote)
+            onPreviewNote (pitch, velocity, on);
+    };
+
     addChildComponent (pianoRoll);
     addChildComponent (deviceChain);
     updateVisibility();

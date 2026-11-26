@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PROJECT version="1" bpm="124" beatsPerBar="4" masterGain="0">
+  <TRACK kind="midi" name="1 Drums" colour="ffff8a3d" gain="-3">
+    <DEVICE type="drumrack" uid="1" pad1File="builtin:kick" pad2File="builtin:rim" pad3File="builtin:snare" pad4File="builtin:clap" pad5File="builtin:shaker" pad6File="builtin:lowTom" pad7File="builtin:closedHat" pad8File="builtin:midTom" pad9File="builtin:cowbell" pad10File="builtin:highTom" pad11File="builtin:openHat" pad12File="builtin:conga" pad13File="builtin:zap" pad14File="builtin:crash" pad15File="builtin:sub" pad16File="builtin:ride" pad7Choke="1" pad11Choke="1"/>
+    <CLIP kind="midi" name="Beat" start="0" length="16" offsetBeats="0" loop="1" loopLength="8">
+      <NOTE pitch="36" start="0" length="0.25" velocity="1.0"/>
+      <NOTE pitch="36" start="1.5" length="0.25" velocity="1.0"/>
+      <NOTE pitch="36" start="2.5" length="0.25" velocity="1.0"/>
+      <NOTE pitch="38" start="1" length="0.25" velocity="0.9"/>
+      <NOTE pitch="38" start="3" length="0.25" velocity="0.9"/>
+      <NOTE pitch="42" start="0.0" length="0.25" velocity="0.75"/>
+      <NOTE pitch="42" start="0.5" length="0.25" velocity="0.5"/>
+      <NOTE pitch="42" start="1.0" length="0.25" velocity="0.75"/>
+      <NOTE pitch="42" start="1.5" length="0.25" velocity="0.5"/>
+      <NOTE pitch="42" start="2.0" length="0.25" velocity="0.75"/>
+      <NOTE pitch="42" start="2.5" length="0.25" velocity="0.5"/>
+      <NOTE pitch="42" start="3.0" length="0.25" velocity="0.75"/>
+      <NOTE pitch="42" start="3.5" length="0.25" velocity="0.5"/>
+      <NOTE pitch="36" start="4" length="0.25" velocity="1.0"/>
+      <NOTE pitch="36" start="6.5" length="0.25" velocity="1.0"/>
+      <NOTE pitch="36" start="7" length="0.25" velocity="1.0"/>
+      <NOTE pitch="38" start="5" length="0.25" velocity="0.9"/>
+      <NOTE pitch="38" start="7" length="0.25" velocity="0.9"/>
+      <NOTE pitch="42" start="4.0" length="0.25" velocity="0.75"/>
+      <NOTE pitch="42" start="4.5" length="0.25" velocity="0.5"/>
+      <NOTE pitch="42" start="5.0" length="0.25" velocity="0.75"/>
+      <NOTE pitch="42" start="5.5" length="0.25" velocity="0.5"/>
+      <NOTE pitch="42" start="6.0" length="0.25" velocity="0.75"/>
+      <NOTE pitch="42" start="6.5" length="0.25" velocity="0.5"/>
+      <NOTE pitch="42" start="7.0" length="0.25" velocity="0.75"/>
+      <NOTE pitch="46" start="7.5" length="0.25" velocity="0.5"/>
+      <NOTE pitch="39" start="7.75" length="0.25" velocity="0.7"/>
+    </CLIP>
+  </TRACK>
+</PROJECT>

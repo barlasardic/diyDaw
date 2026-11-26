@@ -20,6 +20,8 @@ target_sources(daw_engine INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/AudioEffect.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/AudioTrack.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/Automation.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/BuiltinSamples.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/engine/DrumRack.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/Effects.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/Engine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/engine/Metronome.cpp
@@ -64,7 +66,9 @@ if(DAW_BUILD_TESTS)
         tests/DeviceChainTests.cpp
         tests/LiveNoteTests.cpp
         tests/AutomationTests.cpp
-        tests/MasterTailTests.cpp)
+        tests/MasterTailTests.cpp
+        tests/DrumRackTests.cpp
+        tests/DrumTrackTests.cpp)
     target_compile_definitions(DawEngineTests PRIVATE ${DAW_COMMON_DEFINITIONS})
     target_link_libraries(DawEngineTests PRIVATE
         daw_model
@@ -100,6 +104,7 @@ if(DAW_BUILD_APP)
         app/clipeditor/PianoRoll.cpp
         app/devices/SynthPanel.cpp
         app/devices/DeviceChain.cpp
+        app/devices/DrumRackPanel.cpp
         app/DetailView.cpp)
     target_include_directories(DiyDaw PRIVATE app app/arrangement app/clipeditor app/devices)
     target_compile_definitions(DiyDaw PRIVATE

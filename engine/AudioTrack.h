@@ -5,6 +5,7 @@
 #include "Clip.h"
 #include "PeakMeter.h"
 #include "RealtimeSwap.h"
+#include "DrumRack.h"
 #include "Synth.h"
 #include "Transport.h"
 
@@ -70,15 +71,26 @@ public:
         model set; when a lane goes away the model must push the parameter's own value again. */
     void setAutomation (std::unique_ptr<AutomationList> list) { automation.publish (std::move (list)); }
 
-    /** Free clip lists, samples, effect chains and automation the audio thread is done with. */
-    void collectGarbage() { clips.collectGarbage(); effects.collectGarbage(); automation.collectGarbage(); }
+    /** Free clip lists, samples, effect chains, automation and drum kits the audio thread is done with. */
+    void collectGarbage() { clips.collectGarbage(); effects.collectGarbage(); automation.collectGarbage(); drumRack.collectGarbage(); }
 
     PeakMeter& getMeter() noexcept { return meter; }
 
-    /** MIDI track: render MIDI clips and live notes through the synth. */
-    void setInstrumentEnabled (bool shouldBeEnabled) noexcept { instrumentEnabled.store (shouldBeEnabled); }
-    bool isInstrumentEnabled() const noexcept { return instrumentEnabled.load(); }
+    /** MIDI tracks render MIDI clips and live notes through one instrument. Switching resets
+        the previous instrument (on the audio thread, at the next block). */
+    enum class InstrumentType { none, synth, drumRack };
+    void setInstrumentType (InstrumentType type) noexcept { instrumentType.store ((int) type); }
+    InstrumentType getInstrumentType() const noexcept { return (InstrumentType) instrumentType.load(); }
+
+    /** Shorthand: synth on / no instrument. */
+    void setInstrumentEnabled (bool shouldBeEnabled) noexcept { setInstrumentType (shouldBeEnabled ? InstrumentType::synth : InstrumentType::none); }
+    bool isInstrumentEnabled() const noexcept { return getInstrumentType() != InstrumentType::none; }
+
     Synth& getSynth() noexcept { return synth; }
+    DrumRack& getDrumRack() noexcept { return drumRack; }
+
+    /** The active instrument, or nullptr (any thread; only its params may be touched). */
+    Instrument* getInstrument() noexcept;
 
     /** Live note from a MIDI keyboard or the computer keyboard; plays at the start of the next
         block. Any non-audio thread (several producers are fine). Drops notes if the queue is full. */
@@ -109,8 +121,10 @@ private:
     RealtimeSwap<AutomationList> automation;
     PeakMeter meter;
 
-    std::atomic<bool> instrumentEnabled { false };
+    std::atomic<int> instrumentType { (int) InstrumentType::none };
     Synth synth;
+    DrumRack drumRack;
+    int lastInstrumentType = (int) InstrumentType::none; // audio thread
 
     // Live notes: producers serialise on liveMutex; the audio thread reads lock-free.
     static constexpr int liveQueueSize = 256;

@@ -119,6 +119,11 @@ TransportBar::TransportBar (Project& p) : project (p), engine (p.getEngine())
     addMidiTrackButton.onClick = [this] { if (onAddMidiTrack) onAddMidiTrack(); };
     addAndMakeVisible (addMidiTrackButton);
 
+    addDrumTrackButton.setMouseClickGrabsKeyboardFocus (false);
+    addDrumTrackButton.setTooltip ("New drum track: a drum rack with the builtin kit (Ctrl+Alt+T)");
+    addDrumTrackButton.onClick = [this] { if (onAddDrumTrack) onAddDrumTrack(); };
+    addAndMakeVisible (addDrumTrackButton);
+
     viewButton.setMouseClickGrabsKeyboardFocus (false);
     viewButton.setTooltip ("Switch between arrangement and mixer (Tab)");
     viewButton.onClick = [this] { if (onToggleView) onToggleView(); };
@@ -185,6 +190,8 @@ void TransportBar::resized()
     metronomeButton.setBounds (left.removeFromLeft (56).reduced (0, 2));
 
     settingsButton.setBounds (area.removeFromRight (80).reduced (0, 2));
+    area.removeFromRight (6);
+    addDrumTrackButton.setBounds (area.removeFromRight (74).reduced (0, 2));
     area.removeFromRight (6);
     addMidiTrackButton.setBounds (area.removeFromRight (70).reduced (0, 2));
     area.removeFromRight (6);

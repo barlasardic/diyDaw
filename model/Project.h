@@ -43,7 +43,7 @@ namespace ids
     DAW_DECLARE_ID (loopLength)  // CLIP (midi): loop length in beats (content wraps when 'loop')
     DAW_DECLARE_ID (pitch)       // NOTE: MIDI note number
     DAW_DECLARE_ID (velocity)    // NOTE: 0..1
-    DAW_DECLARE_ID (type)        // DEVICE: "synth", "eq", "compressor", "reverb", "delay"
+    DAW_DECLARE_ID (type)        // DEVICE: "synth", "drumrack" (instruments), "eq", "compressor", "reverb", "delay"
     DAW_DECLARE_ID (enabled)     // DEVICE (effects): bool, false = bypassed
     DAW_DECLARE_ID (height)      // TRACK: arrangement lane height in pixels (UI layout, not undoable)
     DAW_DECLARE_ID (uid)         // DEVICE: id unique within the project (automation targets refer to it)
@@ -61,6 +61,8 @@ namespace ids
             CLIP { kind="midi", name, start, length, offsetBeats, loop, loopLength }
               NOTE { pitch, start, length, velocity }      (start: content beats)
             DEVICE { type="synth", <Synth param id>=value ... }   (MIDI tracks only, first)
+            DEVICE { type="drumrack", pad1File..pad16File (SamplePool keys), <DrumRack param id>=value ... }
+                                                         (instead of the synth: a drum track)
             DEVICE { type="eq"|"compressor"|"reverb"|"delay", uid, enabled, <param id>=value ... }
             AUTOMATION { target }
               POINT { beat, value }
@@ -144,7 +146,8 @@ public:
     float getMasterGain() const { return state[ids::masterGain]; }
 
     // ---- tracks (adding a track is not undoable yet) ------------------------
-    enum class TrackKind { audio, midi };
+    /** drums = a MIDI track whose instrument is a drum rack (with the builtin kit). */
+    enum class TrackKind { audio, midi, drums };
 
     /** Returns the new TRACK, or an invalid tree if the engine's track pool is full.
         A MIDI track gets a synth DEVICE with default parameters. */
@@ -191,7 +194,19 @@ public:
     static juce::String getDeviceType (const juce::ValueTree& device) { return device[ids::type].toString(); }
 
     // Insert effects: any track; processed in order after the clips / instrument, before the fader.
-    static bool isEffect (const juce::ValueTree& tree) { return tree.hasType (ids::DEVICE) && getDeviceType (tree) != "synth"; }
+    static bool isInstrumentType (const juce::String& type) { return type == "synth" || type == "drumrack"; }
+    static bool isEffect (const juce::ValueTree& tree) { return tree.hasType (ids::DEVICE) && ! isInstrumentType (getDeviceType (tree)); }
+    static bool isDrumTrack (const juce::ValueTree& track) { return getDeviceType (getDevice (track)) == "drumrack"; }
+
+    // ---- drum rack pads (undoable) ----------------------------------------------
+    /** SamplePool key of a pad's sample ("" = empty pad; "builtin:<name>" for builtin sounds). */
+    static juce::String getPadSampleKey (const juce::ValueTree& drumRack, int pad);
+    /** Display name: the builtin sound's name or the file name without extension. */
+    static juce::String getPadName (const juce::ValueTree& drumRack, int pad);
+    /** Puts a sample on a pad. The key is SamplePool::keyFor (file) or a builtin key; the pad
+        stays silent until the sample is in the pool (load it with SamplePool::loadAsync). */
+    void setPadSample (juce::ValueTree drumRack, int pad, const juce::String& sampleKey);
+    void clearPad (juce::ValueTree drumRack, int pad) { setPadSample (drumRack, pad, {}); }
     juce::Array<juce::ValueTree> getEffects (const juce::ValueTree& track) const;
 
     /** Adds an effect of a type from getEffectTypes() at position 'index' among the track's
@@ -339,7 +354,8 @@ private:
     int nextDeviceUid() const;
     static juce::ValueTree findDeviceByUid (const juce::ValueTree& track, int deviceUid);
     void valueTreeChildOrderChanged (juce::ValueTree& parent, int oldIndex, int newIndex) override;
-    static juce::ValueTree makeDevice();
+    static juce::ValueTree makeDevice (const juce::String& type = "synth");
+    void syncDrumKit (const juce::ValueTree& track);
     void syncProjectProperties();
     /** Swaps in a new set of tracks (and PROJECT properties) without undo; resets the engine. */
     juce::String replaceContents (const juce::ValueTree& newState);

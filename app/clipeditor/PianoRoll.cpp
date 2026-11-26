@@ -1,5 +1,6 @@
 #include "PianoRoll.h"
 #include "DawLookAndFeel.h"
+#include "DrumRack.h"
 
 #include <algorithm>
 #include <cmath>
@@ -119,6 +120,12 @@ void PianoRoll::fitClip()
             highest = juce::jmax (highest, Project::getNotePitch (note));
         }
 
+    if (Project::isDrumTrack (clip.getParent()))
+    {
+        lowest = DrumRack::firstNote;
+        highest = DrumRack::firstNote + DrumRack::numPads - 1;
+    }
+
     const auto centre = lowest <= highest ? (float) (lowest + highest) * 0.5f : 60.0f;
     rowHeight = lowest <= highest ? juce::jlimit (6.0f, 14.0f, grid.getHeight() / (float) (highest - lowest + 5))
                                  : 14.0f;
@@ -192,6 +199,10 @@ void PianoRoll::refresh()
     playheadBeat = -1.0;
     if (hasClip())
     {
+        // Pad assignments can change through undo while this clip's notes stay unchanged.
+        if (Project::isDrumTrack (clip.getParent()))
+            repaint (0, rulerHeight, keyboardWidth, (int) gridBounds().getHeight());
+
         const auto position = transport.getPositionBeats();
         if (position >= Project::getClipStart (clip) && position < Project::getClipEnd (clip))
         {
@@ -230,6 +241,8 @@ void PianoRoll::paint (juce::Graphics& g)
     const auto grid = gridBounds();
     const auto velocity = velocityBounds();
     const auto colour = Project::getTrackColour (clip.getParent());
+    const auto drumDevice = Project::isDrumTrack (clip.getParent()) ? Project::getDevice (clip.getParent())
+                                                                : juce::ValueTree();
     const auto loop = drag.mode == DragMode::loopEnd ? drag.loop : Project::getClipLoopLength (clip);
     const auto loopX = xAt (loop);
     const auto width = (float) getWidth();
@@ -248,16 +261,28 @@ void PianoRoll::paint (juce::Graphics& g)
         g.drawHorizontalLine ((int) std::floor (y + rowHeight), grid.getX(), width);
 
         const auto sounding = pitch == previewPitch;
-        g.setColour (sounding ? colours::accent : (blackKey (pitch) ? colours::background : colours::panelRaised.brighter (0.2f)));
+        const auto drumRow = drumDevice.isValid() && pitch >= DrumRack::firstNote
+                             && pitch < DrumRack::firstNote + DrumRack::numPads;
+        g.setColour (sounding ? (drumRow ? colour : colours::accent)
+                             : (drumRow ? colours::panelRaised.interpolatedWith (colour, 0.06f)
+                                        : (blackKey (pitch) ? colours::background : colours::panelRaised.brighter (0.2f))));
         g.fillRect (0.0f, y, (float) keyboardWidth - 1.0f, rowHeight);
-        if (blackKey (pitch) && ! sounding)
+        if (blackKey (pitch) && ! sounding && ! drumRow)
         {
             g.setColour (colours::panelRaised);
             g.fillRect ((float) keyboardWidth - 13.0f, y, 12.0f, rowHeight);
         }
         g.setColour (colours::outline.withAlpha (0.65f));
         g.drawHorizontalLine ((int) std::floor (y + rowHeight), 0.0f, (float) keyboardWidth);
-        if (pitch % 12 == 0)
+        if (drumRow)
+        {
+            g.setColour (sounding ? colours::background : colours::text);
+            g.setFont (juce::FontOptions (9.0f));
+            g.drawText (Project::getPadName (drumDevice, pitch - DrumRack::firstNote),
+                        4, (int) std::floor (y), keyboardWidth - 8,
+                        juce::jmax (1, (int) rowHeight), juce::Justification::centredLeft, true);
+        }
+        else if (pitch % 12 == 0)
         {
             g.setColour (sounding ? colours::background : colours::text);
             g.setFont (juce::FontOptions (10.0f));

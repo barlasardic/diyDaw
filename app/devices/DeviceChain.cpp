@@ -1,6 +1,7 @@
 #include "DeviceChain.h"
 #include "AudioEffect.h"
 #include "DawLookAndFeel.h"
+#include "DrumRackPanel.h"
 #include "Effects.h"
 #include "ProjectControls.h"
 
@@ -646,6 +647,9 @@ namespace
 //==============================================================================
 struct DeviceChain::Panels
 {
+    explicit Panels (Project& project) : drumRackPanel (project) {}
+
+    DrumRackPanel drumRackPanel;
     DevicePanelLookAndFeel comboLookAndFeel;
     std::vector<std::unique_ptr<EffectPanel>> effects;
     juce::TextButton addEffect { "+ Add Effect" };
@@ -654,11 +658,17 @@ struct DeviceChain::Panels
 
 //==============================================================================
 DeviceChain::DeviceChain (Project& p)
-    : project (p), synthPanel (p), panels (std::make_unique<Panels>())
+    : project (p), synthPanel (p), panels (std::make_unique<Panels> (p))
 {
     viewport.setViewedComponent (&content, false);
     viewport.setScrollBarsShown (false, true);
     content.addChildComponent (synthPanel);
+    content.addChildComponent (panels->drumRackPanel);
+    panels->drumRackPanel.onPreviewNote = [this] (int pitch, float velocity, bool isNoteOn)
+    {
+        if (onPreviewNote)
+            onPreviewNote (pitch, velocity, isNoteOn);
+    };
 
     panels->addEffect.setMouseClickGrabsKeyboardFocus (false);
     panels->addEffect.setTooltip ("Add an effect to this track");
@@ -729,8 +739,11 @@ void DeviceChain::rebuild()
 void DeviceChain::rebuildNow()
 {
     const auto isMidi = track.isValid() && Project::isMidiTrack (track);
-    synthPanel.setTrack (isMidi ? track : juce::ValueTree());
-    synthPanel.setVisible (isMidi);
+    const auto isDrum = isMidi && Project::isDrumTrack (track);
+    synthPanel.setTrack (isMidi && ! isDrum ? track : juce::ValueTree());
+    synthPanel.setVisible (isMidi && ! isDrum);
+    panels->drumRackPanel.setTrack (isDrum ? track : juce::ValueTree());
+    panels->drumRackPanel.setVisible (isDrum);
 
     for (auto& effect : panels->effects)
         content.removeChildComponent (effect.get());
@@ -778,6 +791,9 @@ void DeviceChain::refresh()
     if (synthPanel.isVisible())
         synthPanel.refresh();
 
+    if (panels->drumRackPanel.isVisible())
+        panels->drumRackPanel.refresh();
+
     for (auto& effect : panels->effects)
         effect->refresh();
 }
@@ -789,11 +805,13 @@ void DeviceChain::resized()
     viewport.setBounds (getLocalBounds());
 
     const auto isMidi = track.isValid() && Project::isMidiTrack (track);
+    const auto isDrum = isMidi && Project::isDrumTrack (track);
+    const auto instrumentWidth = isDrum ? DrumRackPanel::preferredWidth : SynthPanel::preferredWidth;
 
     auto neededWidth = chainPadding * 2;
 
     if (isMidi)
-        neededWidth += SynthPanel::preferredWidth + deviceGap;
+        neededWidth += instrumentWidth + deviceGap;
 
     for (const auto& effect : panels->effects)
         neededWidth += effect->getPreferredWidth() + deviceGap;
@@ -809,8 +827,11 @@ void DeviceChain::resized()
 
     if (isMidi)
     {
-        synthPanel.setBounds (x, 0, SynthPanel::preferredWidth, height);
-        x += SynthPanel::preferredWidth + deviceGap;
+        if (isDrum)
+            panels->drumRackPanel.setBounds (x, 0, instrumentWidth, height);
+        else
+            synthPanel.setBounds (x, 0, instrumentWidth, height);
+        x += instrumentWidth + deviceGap;
     }
 
     for (const auto& effect : panels->effects)
