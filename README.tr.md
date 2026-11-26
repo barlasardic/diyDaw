@@ -82,5 +82,15 @@ kullanım kılavuzundaki [Bilinen sınırlar](docs/tr/kullanim-kilavuzu.md#bilin
 
 ## Lisans
 
-Henüz bir lisans dosyası eklenmedi. JUCE kendi lisansıyla (AGPLv3 veya ticari) dağıtılır;
-diyDaw'ı dağıtmadan önce JUCE lisans koşullarını gözden geçirin.
+Telif hakkı (C) 2026 diyDaw katkıda bulunanları.
+
+diyDaw özgür bir yazılımdır: Free Software Foundation tarafından yayımlanan **GNU Affero Genel
+Kamu Lisansı, sürüm 3** (ya da tercihinize göre daha sonraki bir sürüm) koşulları altında
+dağıtabilir ve/veya değiştirebilirsiniz. Lisansın tam metni (İngilizce) için
+[LICENSE.md](LICENSE.md) dosyasına bakın.
+
+diyDaw yararlı olması umuduyla, ancak HİÇBİR GARANTİ OLMAKSIZIN dağıtılmaktadır; SATILABİLİRLİK
+ya da BELİRLİ BİR AMACA UYGUNLUK zımni garantisi dahi yoktur.
+
+diyDaw, AGPLv3 lisans seçeneğiyle kullanılan [JUCE](https://juce.com) üzerine kuruludur. Üçüncü
+taraf kodlar kendi lisanslarını korur: JUCE (`external/JUCE`) ve onunla gelen VST3 / LV2 SDK'ları.

@@ -84,5 +84,15 @@ recording, plugin parameter automation, plugin latency compensation, audio time 
 
 ## License
 
-No license file has been added yet. JUCE is dual-licensed under the AGPLv3 or a commercial
-license, so the project's license must be compatible with the applicable JUCE license terms.
+Copyright (C) 2026 diyDaw contributors.
+
+diyDaw is free software: you can redistribute it and/or modify it under the terms of the
+**GNU Affero General Public License, version 3** (or, at your option, any later version), as
+published by the Free Software Foundation. See [LICENSE.md](LICENSE.md) for the full text.
+
+diyDaw is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
+the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+diyDaw is built on [JUCE](https://juce.com), which is used here under its AGPLv3 license option.
+Third-party code keeps its own license: JUCE (`external/JUCE`) and the VST3 / LV2 SDKs bundled with
+it.
