@@ -15,7 +15,11 @@ fresh clones need `git submodule update --init`).
 - `app/arrangement/` — arrangement view: `TimelineGeometry` (beats<->pixels, grid, snap),
   `TimeRuler`, `TrackHeader`, `ClipPainter`, `ArrangementView`.
 - `app/DetailView` — Ableton's bottom panel: Clip tab (`app/clipeditor/PianoRoll`) and Device
-  tab (`app/devices/SynthPanel`). `app/ExportDialog` — Export Audio dialog + background job.
+  tab (`app/devices/DeviceChain`: SynthPanel / DrumRackPanel / plugin panels + effect panels).
+  `app/ExportDialog` — Export Audio dialog + background job. `app/plugins` — Plugin Manager and
+  plugin editor windows.
+- `docs/` — user and developer documentation (Turkish): user guide, shortcuts, architecture,
+  file format, development. Keep it in sync when behaviour or the file format changes.
 - `examples/` — small projects for snapshots and manual testing (`midi-demo.diydaw`).
 - `tests/` — headless `juce::UnitTest` tests, category `"diyDaw"`, run by `DawEngineTests`.
 
